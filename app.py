@@ -419,23 +419,7 @@ def run_session(session):
                             session.log(f"🎉 +{views} views! Total: {session.total_views:,}")
                         else:
                             zero_streak += 1
-                            session.log(f"⚠️ Zefoy returned 0 views (streak: {zero_streak})")
-                            if zero_streak >= 3:
-                                wait = min(zero_streak * 30, 180)
-                                session.log(f"⏸️ Views service appears down — waiting {wait}s before retry")
-                                for remaining in range(wait, 0, -1):
-                                    if session.stop_event.is_set():
-                                        break
-                                    mins = remaining // 60
-                                    secs = remaining % 60
-                                    time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
-                                    session.set_countdown(f"⏸️ 0-views cooldown: {time_str}")
-                                    time.sleep(1)
-                                session.set_countdown("")
-                            if zero_streak >= 5:
-                                session.log("🔄 Refreshing page to reset session...")
-                                page.reload()
-                                time.sleep(5)
+                            session.log(f"⚠️ Zefoy returned 0 views (streak: {zero_streak}) — retrying...")
                         break
 
                     elif state_type == 'bar':
@@ -463,23 +447,7 @@ def run_session(session):
                             session.log(f"🎉 +{views} views! Total: {session.total_views:,}")
                         else:
                             zero_streak += 1
-                            session.log(f"⚠️ Zefoy returned 0 views (streak: {zero_streak})")
-                            if zero_streak >= 3:
-                                wait = min(zero_streak * 30, 180)
-                                session.log(f"⏸️ Views service appears down — waiting {wait}s before retry")
-                                for remaining in range(wait, 0, -1):
-                                    if session.stop_event.is_set():
-                                        break
-                                    mins = remaining // 60
-                                    secs = remaining % 60
-                                    time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
-                                    session.set_countdown(f"⏸️ 0-views cooldown: {time_str}")
-                                    time.sleep(1)
-                                session.set_countdown("")
-                            if zero_streak >= 5:
-                                session.log("🔄 Refreshing page to reset session...")
-                                page.reload()
-                                time.sleep(5)
+                            session.log(f"⚠️ Zefoy returned 0 views (streak: {zero_streak}) — retrying...")
                         break
 
                     elif state_type == 'loading':
