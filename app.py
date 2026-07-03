@@ -454,8 +454,27 @@ def run_session(session):
 
                         // Success
                         if (lower.includes('successfully')) {
-                            const match = body.match(/[Ss]uccessfully\\s+(\\d+)/);
-                            return {type: 'success', count: match ? parseInt(match[1]) : 0};
+                            // Try multiple patterns: "Successfully 100", "100 sent successfully", etc.
+                            const nums = body.match(/\\d+/g);
+                            let count = 0;
+                            if (nums) {
+                                // Find the largest number near "successfully" (likely the count)
+                                const lines = body.split('\\n');
+                                for (const line of lines) {
+                                    if (line.toLowerCase().includes('successfully')) {
+                                        const lineNums = line.match(/\\d+/g);
+                                        if (lineNums) {
+                                            count = Math.max(...lineNums.map(Number));
+                                        }
+                                        break;
+                                    }
+                                }
+                                // Fallback: largest number on page
+                                if (count === 0) {
+                                    count = Math.max(...nums.map(Number).filter(n => n < 100000));
+                                }
+                            }
+                            return {type: 'success', count: count || 0};
                         }
 
                         // Spinner
@@ -572,8 +591,19 @@ def run_session(session):
                             try:
                                 body = page.inner_text("body")
                                 if "successfully" in body.lower():
-                                    match = re.search(r'[Ss]uccessfully\s+(\d+)', body)
-                                    count = int(match.group(1)) if match else 0
+                                    # Find count: try multiple patterns
+                                    # "Successfully 100", "100 sent successfully", etc.
+                                    for line in body.split('\n'):
+                                        if 'successfully' in line.lower():
+                                            line_nums = re.findall(r'\d+', line)
+                                            if line_nums:
+                                                count = max(int(n) for n in line_nums)
+                                            break
+                                    # Fallback: any number near "successfully"
+                                    if count == 0:
+                                        all_nums = re.findall(r'\d+', body)
+                                        if all_nums:
+                                            count = max(int(n) for n in all_nums if int(n) < 100000)
                                     session.total_count += count
                                     break
                             except:
