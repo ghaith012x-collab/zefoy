@@ -111,9 +111,9 @@ def run_bot(tiktok_url, q):
             for cycle in range(1, 51):
                 log(f"\n{'='*30} CYCLE {cycle} {'='*30}")
 
-                # ── Fill URL ──
+                # ── Fill URL (scoped to Views panel only) ──
                 emit(q, 5, f"Cycle {cycle}: Entering URL...")
-                url_input = page.locator("input[placeholder='Enter Video URL']")
+                url_input = page.locator(".t-views-menu input[placeholder='Enter Video URL']")
                 url_input.fill("")
                 time.sleep(0.3)
                 url_input.fill(tiktok_url)
