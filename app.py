@@ -260,9 +260,28 @@ def run_session(session):
             captcha_detected = False
             page_ready = False
 
-            for page_attempt in range(5):
+            for page_attempt in range(10):
                 if session.stop_event.is_set():
                     break
+
+                # Check if site is returning an error page
+                try:
+                    page_title = page.title().lower()
+                    page_text = page.inner_text("body")[:200].lower()
+                    if "502" in page_title or "502 bad gateway" in page_text:
+                        session.log(f"🔴 Zefoy is down (502 error), retrying ({page_attempt + 1}/10)...")
+                        time.sleep(10 + page_attempt * 3)
+                        page.reload(wait_until="domcontentloaded")
+                        time.sleep(5)
+                        continue
+                    if "503" in page_title or "cloudflare" in page_text or "just a moment" in page_text:
+                        session.log(f"🔴 Zefoy loading/Cloudflare check ({page_attempt + 1}/10)...")
+                        time.sleep(10 + page_attempt * 3)
+                        page.reload(wait_until="domcontentloaded")
+                        time.sleep(5)
+                        continue
+                except:
+                    pass
 
                 # Check for captcha elements
                 try:
@@ -282,7 +301,7 @@ def run_session(session):
                     pass
 
                 # Neither found — reload and try again
-                session.log(f"⚠️ Page not ready, reloading (attempt {page_attempt + 1}/5)...")
+                session.log(f"⚠️ Page not ready, reloading (attempt {page_attempt + 1}/10)...")
                 page.reload(wait_until="domcontentloaded")
                 time.sleep(5 + page_attempt * 2)  # increasing wait
 
