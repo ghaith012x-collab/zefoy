@@ -9,8 +9,22 @@ import numpy as np
 app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
 
-# Optional proxy: set PROXY_URL env var in Railway (e.g. http://user:pass@host:port)
-PROXY_URL = os.environ.get("PROXY_URL", "").strip()
+# Optional proxy: set PROXY_URL env var in Railway
+# Supports formats: http://user:pass@host:port  OR  host:port:user:pass  OR  host:port
+def _parse_proxy(raw):
+    raw = raw.strip()
+    if not raw:
+        return ""
+    if raw.startswith("http://") or raw.startswith("https://") or raw.startswith("socks"):
+        return raw
+    parts = raw.split(":")
+    if len(parts) == 4:  # host:port:user:pass
+        return f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
+    if len(parts) == 2:  # host:port
+        return f"http://{parts[0]}:{parts[1]}"
+    return raw  # try as-is
+
+PROXY_URL = _parse_proxy(os.environ.get("PROXY_URL", ""))
 
 # ═══════════════════════════════════════════════════════════════
 #  SERVICES
