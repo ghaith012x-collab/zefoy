@@ -523,14 +523,14 @@ def run_tab(session, tab_id):
                             pass
 
                         try:
-                            page.locator("#captcha-img, .wrapper-capth, #captchatoken").first.wait_for(state="visible", timeout=10000)
+                            page.locator("#captcha-img, .wrapper-capth, #captchatoken, img[src*=\"captcha\"], img[src*=\"CAPTCHA\"]").first.wait_for(state="visible", timeout=30000)
                             captcha_detected = True
                             break
                         except:
                             pass
 
                         try:
-                            page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=5000)
+                            page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=20000)
                             session.log("\u2705 No captcha needed \u2014 service buttons already visible")
                             page_ready = True
                             break
@@ -539,7 +539,7 @@ def run_tab(session, tab_id):
 
                         session.log(f"\u26a0\ufe0f Page not ready, reloading (attempt {page_attempt + 1}/10)...")
                         page.reload(wait_until="domcontentloaded")
-                        time.sleep(5 + page_attempt * 2)
+                        time.sleep(10 + page_attempt * 3)
                     else:
                         session.log("\u26a0\ufe0f Page never became ready, restarting...")
                         continue
@@ -853,14 +853,15 @@ def run_tab(session, tab_id):
                                         if "successfully" in body.lower():
                                             for line in body.split('\n'):
                                                 if 'successfully' in line.lower():
-                                                    line_nums = re.findall(r'\d+', line)
+                                                    line_nums = [int(n) for n in re.findall(r'\d+', line) if 2020 <= int(n) <= 2035 is False and int(n) < 100000]
+                                                    line_nums = [n for n in [int(x) for x in re.findall(r'\d+', line)] if not (2020 <= n <= 2035) and n < 100000]
                                                     if line_nums:
-                                                        count = max(int(n) for n in line_nums)
+                                                        count = max(line_nums)
                                                 break
                                             if count == 0:
-                                                all_nums = re.findall(r'\d+', body)
+                                                all_nums = [int(n) for n in re.findall(r'\d+', body) if not (2020 <= int(n) <= 2035) and int(n) < 100000]
                                                 if all_nums:
-                                                    count = max(int(n) for n in all_nums if int(n) < 100000)
+                                                    count = max(all_nums)
                                             new_total = session.add_count(count)
                                             break
                                     except:
