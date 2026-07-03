@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify, Response
 from playwright.sync_api import sync_playwright
-import threading, time, re, sys, difflib, json, base64
+import threading, time, re, sys, difflib, json, base64, os
 from PIL import Image, ImageOps
 from io import BytesIO
 from collections import Counter, deque
@@ -8,6 +8,9 @@ import numpy as np
 
 app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
+
+# Optional proxy: set PROXY_URL env var in Railway (e.g. http://user:pass@host:port)
+PROXY_URL = os.environ.get("PROXY_URL", "").strip()
 
 # ═══════════════════════════════════════════════════════════════
 #  SERVICES
@@ -242,10 +245,14 @@ def run_session(session):
             session.log(f"🚀 Launching browser ({svc_name} mode)...")
             session.status = "running"
 
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-            )
+            launch_opts = {
+                "headless": True,
+                "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            }
+            if PROXY_URL:
+                session.log(f"🌐 Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
+                launch_opts["proxy"] = {"server": PROXY_URL}
+            browser = p.chromium.launch(**launch_opts)
             page = browser.new_page()
             page.on("dialog", lambda d: d.accept())
 
