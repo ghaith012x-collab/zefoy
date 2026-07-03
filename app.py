@@ -250,11 +250,13 @@ def run_bot(tiktok_url, q):
             }""")
             log(f"Result container ID: '{form_action}'")
 
-            # ── 5. MAIN LOOP ──
-            for cycle in range(1, 51):
+            # ── 5. MAIN LOOP (infinite until stopped) ──
+            cycle = 0
+            while True:
+                cycle += 1
                 log(f"\n{'='*30} CYCLE {cycle} {'='*30}")
 
-                # ── Fill URL (scoped to Views panel only) ──
+                # ── Fill URL ──
                 emit(q, 5, f"Cycle {cycle}: Entering URL...")
                 url_input = page.locator(".t-views-menu input[placeholder='Enter Video URL']")
                 url_input.fill("")
@@ -269,138 +271,165 @@ def run_bot(tiktok_url, q):
                 page.locator(".t-views-menu button[type='submit']").first.click()
                 time.sleep(3)
 
-                # ── Handle rate limit ──
-                for timer_try in range(3):
-                    try:
-                        countdown = page.locator("#login-countdown")
-                        if countdown.count() > 0 and countdown.is_visible():
-                            timer_text = countdown.inner_text()
-                            if "wait" in timer_text.lower() or "minute" in timer_text.lower():
-                                wait_secs = parse_wait_time(timer_text) + 5
-                                emit(q, 6, f"Cycle {cycle}: Rate limited — waiting {wait_secs}s...")
-                                log(f"Rate limit: '{timer_text}' → waiting {wait_secs}s")
-                                time.sleep(wait_secs)
+                # ── Analyze page: rate limit, spinner, video bar, or success ──
+                action_taken = False
+                for check_round in range(120):  # up to ~2 mins of checking
+                    page_state = page.evaluate("""() => {
+                        const body = document.body.innerText || '';
+                        const lower = body.toLowerCase();
 
-                                # Re-fill and search again
-                                url_input.fill("")
-                                time.sleep(0.3)
-                                url_input.fill(tiktok_url)
-                                time.sleep(1)
-                                page.locator(".t-views-menu button[type='submit']").first.click()
-                                time.sleep(3)
-                                continue
-                    except Exception as e:
-                        log(f"Timer check error: {e}")
-                    break
+                        // Check for rate limit countdown
+                        const countdown = document.getElementById('login-countdown');
+                        if (countdown && countdown.offsetParent !== null) {
+                            const text = countdown.innerText || '';
+                            if (text && (text.toLowerCase().includes('wait') ||
+                                text.toLowerCase().includes('minute') ||
+                                text.toLowerCase().includes('second'))) {
+                                return {type: 'ratelimit', text: text};
+                            }
+                        }
 
-                # ── Find and click the video bar ──
-                emit(q, 7, f"Cycle {cycle}: Looking for video bar...")
-                log("Scanning for video bar...")
+                        // Check for success message
+                        if (lower.includes('successfully')) {
+                            const match = body.match(/[Ss]uccessfully\\s+(\\d+)/);
+                            return {type: 'success', views: match ? parseInt(match[1]) : 0};
+                        }
 
-                bar_clicked = False
-                for attempt in range(30):
-                    try:
-                        coords = page.evaluate("""(formAction) => {
-                            // Strategy 1: clickable element inside the result container
-                            if (formAction) {
-                                const container = document.getElementById(formAction);
-                                if (container) {
-                                    const el = container.querySelector('a, button');
-                                    if (el) {
-                                        const r = el.getBoundingClientRect();
-                                        if (r.width > 0 && r.height > 0) {
-                                            return {x: r.x + r.width/2, y: r.y + r.height/2, m: 'container'};
+                        // Check for loading spinner (fa-spinner, loading class, etc.)
+                        const spinners = document.querySelectorAll('.fa-spinner, .fa-spin, .spinner, [class*="loading"], [class*="spin"]');
+                        for (const s of spinners) {
+                            if (s.offsetParent !== null) return {type: 'loading'};
+                        }
+
+                        // Check for video bar (clickable result)
+                        const viewsMenu = document.querySelector('.t-views-menu');
+                        if (viewsMenu) {
+                            // Look for the result container with a send button
+                            const forms = viewsMenu.querySelectorAll('form');
+                            for (const form of forms) {
+                                const action = form.getAttribute('action');
+                                if (action) {
+                                    const container = document.getElementById(action);
+                                    if (container && container.offsetParent !== null) {
+                                        const btn = container.querySelector('a, button, [onclick]');
+                                        if (btn && btn.offsetParent !== null) {
+                                            const r = btn.getBoundingClientRect();
+                                            if (r.width > 0 && r.height > 0) {
+                                                return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2};
+                                            }
                                         }
-                                    }
-                                    // Also check for any div with digits (the bar itself)
-                                    const divs = container.querySelectorAll('div, span');
-                                    for (const d of divs) {
-                                        const text = d.innerText?.trim();
-                                        if (text && /\\d/.test(text) && text.length < 60 &&
-                                            !text.includes('wait') && !text.includes('minute') &&
-                                            !text.includes('second') && !text.includes('Please')) {
-                                            const r = d.getBoundingClientRect();
-                                            if (r.width > 50 && r.height > 10) {
-                                                return {x: r.x + r.width/2, y: r.y + r.height/2, m: 'container-div'};
+                                        // Any clickable div with digits
+                                        const divs = container.querySelectorAll('div, span');
+                                        for (const d of divs) {
+                                            const t = d.innerText?.trim();
+                                            if (t && /\\d/.test(t) && t.length < 60 &&
+                                                !t.includes('wait') && !t.includes('minute') &&
+                                                !t.includes('second') && !t.includes('Please')) {
+                                                const r = d.getBoundingClientRect();
+                                                if (r.width > 50 && r.height > 10) {
+                                                    return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2};
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
+                        }
 
-                            // Strategy 2: scan below input for elements with digits
-                            const input = document.querySelector('.t-views-menu input[placeholder="Enter Video URL"]');
-                            if (!input) return null;
-                            const inputRect = input.getBoundingClientRect();
-                            const startY = inputRect.bottom + 10;
+                        // Check for any visible timer text in the page
+                        if (lower.includes('please wait') || lower.includes('minute') && lower.includes('second')) {
+                            return {type: 'ratelimit', text: body.substring(0, 500)};
+                        }
 
-                            for (let y = startY; y < startY + 300; y += 5) {
-                                for (let x = 50; x < window.innerWidth - 50; x += 10) {
-                                    const el = document.elementFromPoint(x, y);
-                                    if (el && el.innerText) {
-                                        const text = el.innerText.trim();
-                                        if (/\\d/.test(text) && text.length < 60 &&
-                                            !text.includes('Enter') && !text.includes('Search') &&
-                                            !text.includes('wait') && !text.includes('minute') &&
-                                            !text.includes('second') && !text.includes('Please') &&
-                                            !text.includes('Join') && !text.includes('YouTube')) {
-                                            const r = el.getBoundingClientRect();
-                                            if (r.width > 50 && r.height > 10) {
-                                                return {x: r.x + r.width/2, y: r.y + r.height/2, m: 'scan'};
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            return null;
-                        }""", form_action)
+                        return {type: 'waiting'};
+                    }""")
 
-                        if coords:
-                            log(f"Bar found via '{coords['m']}' at ({coords['x']:.0f}, {coords['y']:.0f})")
-                            page.mouse.click(coords['x'], coords['y'])
-                            bar_clicked = True
+                    state_type = page_state.get('type', 'waiting') if page_state else 'waiting'
+                    log(f"Page state: {state_type}")
+
+                    if state_type == 'ratelimit':
+                        timer_text = page_state.get('text', '')
+                        wait_secs = parse_wait_time(timer_text)
+                        if wait_secs <= 0:
+                            wait_secs = 60  # fallback
+                        wait_secs += 5  # buffer
+                        log(f"Rate limit: '{timer_text}' → waiting {wait_secs}s")
+
+                        # ── LIVE COUNTDOWN ──
+                        for remaining in range(wait_secs, 0, -1):
+                            mins = remaining // 60
+                            secs = remaining % 60
+                            time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
+                            emit(q, 6, f"⏳ Cycle {cycle}: Rate limited — {time_str} remaining")
+                            time.sleep(1)
+
+                        emit(q, 6, f"Cycle {cycle}: Rate limit done, retrying...")
+                        # Re-fill and search
+                        url_input.fill("")
+                        time.sleep(0.3)
+                        url_input.fill(tiktok_url)
+                        time.sleep(1)
+                        page.locator(".t-views-menu button[type='submit']").first.click()
+                        time.sleep(3)
+                        continue  # re-check page state
+
+                    elif state_type == 'success':
+                        views = page_state.get('views', 0)
+                        total_views += views
+                        emit(q, 8, f"✅ Cycle {cycle}: +{views} views (Total: {total_views})")
+                        log(f"SUCCESS! +{views} views | Total: {total_views}")
+                        action_taken = True
+                        break
+
+                    elif state_type == 'bar':
+                        x, y = page_state['x'], page_state['y']
+                        log(f"Video bar found at ({x:.0f}, {y:.0f}), clicking...")
+                        emit(q, 7, f"Cycle {cycle}: Sending views...")
+                        page.mouse.click(x, y)
+                        time.sleep(2)
+
+                        # Wait for success after clicking bar
+                        for _ in range(30):
+                            try:
+                                body = page.inner_text("body")
+                                if "successfully" in body.lower():
+                                    match = re.search(r'[Ss]uccessfully\s+(\d+)', body)
+                                    views = int(match.group(1)) if match else 0
+                                    total_views += views
+                                    emit(q, 8, f"✅ Cycle {cycle}: +{views} views (Total: {total_views})")
+                                    log(f"SUCCESS! +{views} views | Total: {total_views}")
+                                    action_taken = True
+                                    break
+                            except:
+                                pass
+                            time.sleep(1)
+                        break
+
+                    elif state_type == 'loading':
+                        emit(q, 7, f"Cycle {cycle}: Loading...")
+                        time.sleep(1)
+                        continue  # keep checking
+
+                    else:  # waiting
+                        if check_round < 10:
+                            time.sleep(1)
+                            continue
+                        elif check_round < 30:
+                            # Scan more aggressively for bar elements
+                            emit(q, 7, f"Cycle {cycle}: Scanning page...")
+                            time.sleep(1)
+                            continue
+                        else:
+                            emit(q, 7, f"Cycle {cycle}: No response, retrying...")
+                            log("No page response after extended wait")
                             break
-                    except Exception as e:
-                        if attempt == 0:
-                            log(f"Bar scan error: {e}")
-                    time.sleep(1)
 
-                if not bar_clicked:
-                    emit(q, 7, f"Cycle {cycle}: No bar found, skipping...")
-                    log("Bar not found after 30 attempts, skipping cycle")
-                    time.sleep(3)
-                    continue
-
-                # ── Wait for success ──
-                emit(q, 8, f"Cycle {cycle}: Processing...")
-                log("Waiting for success message...")
-
-                got_success = False
-                for _ in range(60):
-                    try:
-                        body = page.inner_text("body")
-                        lower = body.lower()
-                        if "successfully" in lower:
-                            match = re.search(r'[Ss]uccessfully\s+(\d+)', body)
-                            views = int(match.group(1)) if match else 0
-                            total_views += views
-                            emit(q, 8, f"✅ Cycle {cycle}: +{views} views (Total: {total_views})")
-                            log(f"SUCCESS! +{views} views | Total: {total_views}")
-                            got_success = True
-                            break
-                        elif "error" in lower and "captcha" not in lower:
-                            log(f"Error detected in body text")
-                    except:
-                        pass
-                    time.sleep(1)
-
-                if not got_success:
-                    log("No success message after 60s")
-                    emit(q, 8, f"Cycle {cycle}: Timeout waiting for result")
+                if not action_taken:
+                    log(f"Cycle {cycle}: No success, moving to next cycle")
 
                 time.sleep(3)
 
-            # ── DONE ──
+            # ── DONE (only if loop breaks, which it shouldn't) ──
             emit(q, 9, f"🎉 Finished! Total views sent: {total_views}")
             log(f"All done. Total views: {total_views}")
             browser.close()

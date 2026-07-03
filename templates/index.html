@@ -189,10 +189,21 @@
                                 document.getElementById('counterCycles').textContent = 'Cycle ' + cycleCount + ' in progress';
                             }
 
-                            // Start countdown timer for rate limits
-                            const waitMatch = msg.match(/waiting\s+(\d+)s/);
-                            if (waitMatch) {
-                                startCountdown(parseInt(waitMatch[1]));
+                            // Live countdown from backend — show timer in counter box
+                            const countdownMatch = msg.match(/(\d+)m\s*(\d+)s\s*remaining/) || msg.match(/(\d+)s\s*remaining/);
+                            if (msg.includes('remaining')) {
+                                const timerEl = document.getElementById('counterTimer');
+                                timerEl.classList.remove('hidden');
+                                // Parse remaining time from message
+                                const mMatch = msg.match(/(\d+)m\s*(\d+)s/);
+                                const sMatch = msg.match(/(\d+)s\s*remaining/);
+                                if (mMatch) {
+                                    timerEl.textContent = '⏳ ' + mMatch[1] + 'm ' + mMatch[2] + 's remaining';
+                                } else if (sMatch) {
+                                    timerEl.textContent = '⏳ ' + sMatch[1] + 's remaining';
+                                }
+                            } else if (msg.includes('Rate limit done') || msg.includes('✅')) {
+                                document.getElementById('counterTimer').classList.add('hidden');
                             }
 
                             // Success message — update cycle text
