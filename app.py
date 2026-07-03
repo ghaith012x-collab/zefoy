@@ -10,6 +10,52 @@ app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
 
 # ═══════════════════════════════════════════════════════════════
+#  SERVICES
+# ═══════════════════════════════════════════════════════════════
+
+SERVICES = {
+    "views": {
+        "name": "Views",
+        "emoji": "👁️",
+        "button_class": "t-views-button",
+        "menu_class": "t-views-menu",
+        "unit": "views",
+    },
+    "hearts": {
+        "name": "Hearts",
+        "emoji": "❤️",
+        "button_class": "t-hearts-button",
+        "menu_class": "t-hearts-menu",
+        "unit": "hearts",
+    },
+    "shares": {
+        "name": "Shares",
+        "emoji": "🔄",
+        "button_class": "t-shares-button",
+        "menu_class": "t-shares-menu",
+        "unit": "shares",
+    },
+    "favorites": {
+        "name": "Favorites",
+        "emoji": "⭐",
+        "button_class": "t-favorites-button",
+        "menu_class": "t-favorites-menu",
+        "unit": "favorites",
+    },
+    "followers": {
+        "name": "Followers",
+        "emoji": "👥",
+        "button_class": "t-followers-button",
+        "menu_class": "t-followers-menu",
+        "unit": "followers",
+    },
+}
+
+# CSS selector that matches ANY service button (used for captcha-solved check)
+ANY_SERVICE_BUTTON = ", ".join(f".{s['button_class']}" for s in SERVICES.values())
+
+
+# ═══════════════════════════════════════════════════════════════
 #  DICTIONARY
 # ═══════════════════════════════════════════════════════════════
 
@@ -134,18 +180,23 @@ class Session:
     _counter = 0
     _lock = threading.Lock()
 
-    def __init__(self, video_url):
+    def __init__(self, video_url, service="views"):
         with Session._lock:
             Session._counter += 1
             self.id = Session._counter
         self.video_url = video_url
+        self.service = service  # key into SERVICES dict
         self.status = "starting"
-        self.total_views = 0
+        self.total_count = 0
         self.cycles = 0
         self.logs = []       # List of log message strings
         self.countdown = ""  # Current countdown text (updates in-place on frontend)
         self.stop_event = threading.Event()
         self.thread = None
+
+    @property
+    def svc(self):
+        return SERVICES.get(self.service, SERVICES["views"])
 
     def log(self, msg):
         self.logs.append(msg)
@@ -159,8 +210,12 @@ class Session:
         return {
             "id": self.id,
             "url": self.video_url,
+            "service": self.service,
+            "serviceName": self.svc["name"],
+            "serviceEmoji": self.svc["emoji"],
             "status": self.status,
-            "views": self.total_views,
+            "count": self.total_count,
+            "unit": self.svc["unit"],
             "cycles": self.cycles,
             "countdown": self.countdown,
         }
@@ -175,9 +230,16 @@ sessions_lock = threading.Lock()
 # ═══════════════════════════════════════════════════════════════
 
 def run_session(session):
+    svc = session.svc
+    svc_name = svc["name"]
+    btn_cls = svc["button_class"]
+    menu_cls = svc["menu_class"]
+    unit = svc["unit"]
+    emoji = svc["emoji"]
+
     try:
         with sync_playwright() as p:
-            session.log("🚀 Launching browser...")
+            session.log(f"🚀 Launching browser ({svc_name} mode)...")
             session.status = "running"
 
             browser = p.chromium.launch(
@@ -206,10 +268,10 @@ def run_session(session):
             if not captcha_detected:
                 # No captcha elements found — check if already past captcha
                 try:
-                    page.locator(".t-views-button").wait_for(timeout=5000)
-                    session.log("✅ No captcha needed — Views button already visible")
+                    page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=5000)
+                    session.log("✅ No captcha needed — service buttons already visible")
                 except:
-                    # Neither captcha nor views button — reload and retry
+                    # Neither captcha nor service buttons — reload and retry
                     session.log("⚠️ Page not ready, reloading...")
                     page.reload(wait_until="domcontentloaded")
                     time.sleep(5)
@@ -256,9 +318,9 @@ def run_session(session):
                         page.locator("button.submit-captcha, form .btn-primary[type='submit']").first.click()
                         time.sleep(5)
 
-                        # Check if solved — Views button should appear
+                        # Check if solved — any service button should appear
                         try:
-                            page.locator(".t-views-button").wait_for(timeout=8000)
+                            page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=8000)
                             session.log("✅ Captcha solved!")
                             break
                         except:
@@ -275,36 +337,44 @@ def run_session(session):
                         session.log(f"⚠️ Captcha error: {e}")
                         time.sleep(2)
 
-            # ── Click Views button ──
-            session.log("👁️ Looking for Views button...")
+            # ── Click service button ──
+            session.log(f"{emoji} Looking for {svc_name} button...")
             try:
-                page.locator(".t-views-button").wait_for(timeout=30000)
+                page.locator(f".{btn_cls}").wait_for(timeout=30000)
             except:
-                session.log("❌ Views button not found. Stopping.")
+                # Check if the button exists but is disabled
+                try:
+                    btn_el = page.locator(f".{btn_cls}")
+                    if btn_el.count() > 0 and btn_el.get_attribute("disabled"):
+                        session.log(f"❌ {svc_name} is currently unavailable on Zefoy. Try a different service.")
+                    else:
+                        session.log(f"❌ {svc_name} button not found. Stopping.")
+                except:
+                    session.log(f"❌ {svc_name} button not found. Stopping.")
                 session.status = "error"
                 browser.close()
                 return
 
-            page.locator(".t-views-button").click()
+            page.locator(f".{btn_cls}").click()
             time.sleep(2)
-            session.log("✅ Views panel opened!")
+            session.log(f"✅ {svc_name} panel opened!")
 
             # ── Main loop ──
-            zero_streak = 0  # consecutive cycles returning 0 views
+            zero_streak = 0  # consecutive cycles returning 0
             while not session.stop_event.is_set():
                 session.cycles += 1
                 cycle = session.cycles
                 session.log(f"🔄 Cycle {cycle}")
 
                 # Fill URL
-                url_input = page.locator(".t-views-menu input[placeholder='Enter Video URL']")
+                url_input = page.locator(f".{menu_cls} input[type='text'], .{menu_cls} input[placeholder]").first
                 url_input.fill("")
                 time.sleep(0.3)
                 url_input.fill(session.video_url)
                 time.sleep(1)
 
                 # Click Search
-                page.locator(".t-views-menu button[type='submit']").first.click()
+                page.locator(f".{menu_cls} button[type='submit']").first.click()
                 time.sleep(3)
 
                 # ── Analyze page state in a loop ──
@@ -312,7 +382,7 @@ def run_session(session):
                     if session.stop_event.is_set():
                         break
 
-                    page_state = page.evaluate("""() => {
+                    page_state = page.evaluate("""(menuClass) => {
                         const body = document.body.innerText || '';
                         const lower = body.toLowerCase();
 
@@ -330,7 +400,7 @@ def run_session(session):
                         // Success
                         if (lower.includes('successfully')) {
                             const match = body.match(/[Ss]uccessfully\\s+(\\d+)/);
-                            return {type: 'success', views: match ? parseInt(match[1]) : 0};
+                            return {type: 'success', count: match ? parseInt(match[1]) : 0};
                         }
 
                         // Spinner
@@ -339,10 +409,10 @@ def run_session(session):
                             if (s.offsetParent !== null) return {type: 'loading'};
                         }
 
-                        // Video bar
-                        const viewsMenu = document.querySelector('.t-views-menu');
-                        if (viewsMenu) {
-                            const forms = viewsMenu.querySelectorAll('form');
+                        // Action bar (video/profile result)
+                        const menu = document.querySelector('.' + menuClass);
+                        if (menu) {
+                            const forms = menu.querySelectorAll('form');
                             for (const form of forms) {
                                 const action = form.getAttribute('action');
                                 if (action) {
@@ -376,7 +446,7 @@ def run_session(session):
                         }
 
                         return {type: 'waiting'};
-                    }""")
+                    }""", menu_cls)
 
                     state_type = page_state.get('type', 'waiting') if page_state else 'waiting'
 
@@ -407,47 +477,47 @@ def run_session(session):
                         time.sleep(0.3)
                         url_input.fill(session.video_url)
                         time.sleep(1)
-                        page.locator(".t-views-menu button[type='submit']").first.click()
+                        page.locator(f".{menu_cls} button[type='submit']").first.click()
                         time.sleep(3)
                         continue
 
                     elif state_type == 'success':
-                        views = page_state.get('views', 0)
-                        session.total_views += views
-                        if views > 0:
+                        count = page_state.get('count', 0)
+                        session.total_count += count
+                        if count > 0:
                             zero_streak = 0
-                            session.log(f"🎉 +{views} views! Total: {session.total_views:,}")
+                            session.log(f"🎉 +{count} {unit}! Total: {session.total_count:,}")
                         else:
                             zero_streak += 1
-                            session.log(f"⚠️ Zefoy returned 0 views (streak: {zero_streak}) — retrying...")
+                            session.log(f"⚠️ Zefoy returned 0 {unit} (streak: {zero_streak}) — retrying...")
                         break
 
                     elif state_type == 'bar':
                         x, y = page_state['x'], page_state['y']
-                        session.log("📺 Sending views...")
+                        session.log(f"{emoji} Sending {unit}...")
                         page.mouse.click(x, y)
                         time.sleep(2)
 
                         # Wait for success
-                        views = 0
+                        count = 0
                         for _ in range(30):
                             try:
                                 body = page.inner_text("body")
                                 if "successfully" in body.lower():
                                     match = re.search(r'[Ss]uccessfully\s+(\d+)', body)
-                                    views = int(match.group(1)) if match else 0
-                                    session.total_views += views
+                                    count = int(match.group(1)) if match else 0
+                                    session.total_count += count
                                     break
                             except:
                                 pass
                             time.sleep(1)
 
-                        if views > 0:
+                        if count > 0:
                             zero_streak = 0
-                            session.log(f"🎉 +{views} views! Total: {session.total_views:,}")
+                            session.log(f"🎉 +{count} {unit}! Total: {session.total_count:,}")
                         else:
                             zero_streak += 1
-                            session.log(f"⚠️ Zefoy returned 0 views (streak: {zero_streak}) — retrying...")
+                            session.log(f"⚠️ Zefoy returned 0 {unit} (streak: {zero_streak}) — retrying...")
                         break
 
                     elif state_type == 'loading':
@@ -494,10 +564,13 @@ def list_sessions():
 def start():
     data = request.get_json()
     url = data.get("url", "").strip()
+    service = data.get("service", "views").strip().lower()
     if not url:
         return jsonify({"error": "No URL provided"}), 400
+    if service not in SERVICES:
+        return jsonify({"error": f"Unknown service: {service}"}), 400
 
-    session = Session(url)
+    session = Session(url, service=service)
     with sessions_lock:
         sessions[session.id] = session
 
@@ -547,7 +620,8 @@ def stream(sid):
             # Stats update
             data = json.dumps({
                 "type": "stats",
-                "views": session.total_views,
+                "count": session.total_count,
+                "unit": session.svc["unit"],
                 "cycles": session.cycles,
                 "status": session.status,
             })

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Zefoy Views Bot</title>
+<title>Zefoy Bot</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -50,7 +50,22 @@
     display: flex;
     gap: 12px;
     margin-bottom: 20px;
+    flex-wrap: wrap;
   }
+  .new-session select {
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: #fff;
+    font-size: 14px;
+    outline: none;
+    cursor: pointer;
+    min-width: 140px;
+    transition: border-color 0.2s;
+    appearance: auto;
+  }
+  .new-session select:focus { border-color: #7b2ff7; }
   .new-session input {
     flex: 1;
     background: #1a1a2e;
@@ -61,6 +76,7 @@
     font-size: 14px;
     outline: none;
     transition: border-color 0.2s;
+    min-width: 200px;
   }
   .new-session input:focus { border-color: #7b2ff7; }
   .new-session input::placeholder { color: #555; }
@@ -115,10 +131,20 @@
     font-weight: 600;
     font-size: 15px;
   }
+  .service-tag {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: rgba(123, 47, 247, 0.2);
+    color: #b388ff;
+  }
   .session-url {
     color: #666;
     font-size: 12px;
-    max-width: 300px;
+    max-width: 250px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -211,32 +237,39 @@
 <body>
 
 <div class="header">
-  <h1>⚡ Zefoy Views Bot</h1>
+  <h1>⚡ Zefoy Bot</h1>
   <div class="global-stats">
     <div>Sessions: <span id="globalSessions">0</span></div>
-    <div>Total Views: <span id="globalViews">0</span></div>
   </div>
 </div>
 
 <div class="container">
   <div class="new-session">
-    <input type="text" id="urlInput" placeholder="Paste TikTok video URL..." />
+    <select id="serviceSelect">
+      <option value="views">👁️ Views</option>
+      <option value="hearts">❤️ Hearts</option>
+      <option value="shares">🔄 Shares</option>
+      <option value="favorites">⭐ Favorites</option>
+      <option value="followers">👥 Followers</option>
+    </select>
+    <input type="text" id="urlInput" placeholder="Paste TikTok URL..." />
     <button id="startBtn" onclick="startSession()">▶ Start Session</button>
   </div>
 
   <div id="sessionsContainer" class="sessions-grid">
     <div class="empty-state" id="emptyState">
       <div class="icon">🚀</div>
-      <p>No sessions yet. Paste a TikTok URL and hit Start!</p>
+      <p>Choose a service, paste a TikTok URL, and hit Start!</p>
     </div>
   </div>
 </div>
 
 <script>
-const sessionElements = {};  // sid → {card, logBox, countdownBar, eventSource, lastLogCount}
+const sessionElements = {};  // sid → {card, logBox, countdownBar, eventSource, unit}
 
 function startSession() {
   const url = document.getElementById('urlInput').value.trim();
+  const service = document.getElementById('serviceSelect').value;
   if (!url) return;
 
   const btn = document.getElementById('startBtn');
@@ -246,7 +279,7 @@ function startSession() {
   fetch('/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({url}),
+    body: JSON.stringify({url, service}),
   })
   .then(r => r.json())
   .then(data => {
@@ -276,14 +309,17 @@ function addSessionCard(session) {
   card.className = 'session-card';
   card.id = `session-${session.id}`;
 
+  const unitLabel = capitalize(session.unit || 'count');
+
   card.innerHTML = `
     <div class="session-header" onclick="toggleSession(${session.id})">
       <div class="session-info">
         <span class="session-name">Session ${session.id}</span>
+        <span class="service-tag">${session.serviceEmoji || ''} ${session.serviceName || 'Views'}</span>
         <span class="session-url" title="${escHtml(session.url)}">${escHtml(session.url)}</span>
       </div>
       <div class="session-stats">
-        <span class="stat">Views: <b id="views-${session.id}">0</b></span>
+        <span class="stat">${unitLabel}: <b id="count-${session.id}">0</b></span>
         <span class="stat">Cycles: <b id="cycles-${session.id}">0</b></span>
         <span class="status-badge status-${session.status}" id="status-${session.id}">${session.status}</span>
         <span class="session-actions">
@@ -306,6 +342,7 @@ function addSessionCard(session) {
     logBox: card.querySelector(`#logs-${session.id}`),
     countdownBar: card.querySelector(`#countdown-${session.id}`),
     lastLogCount: 0,
+    unit: session.unit || 'count',
   };
 
   updateGlobalStats();
@@ -360,7 +397,7 @@ function connectStream(sid) {
       }
 
       else if (msg.type === 'stats') {
-        document.getElementById(`views-${sid}`).textContent = msg.views.toLocaleString();
+        document.getElementById(`count-${sid}`).textContent = (msg.count || 0).toLocaleString();
         document.getElementById(`cycles-${sid}`).textContent = msg.cycles;
         const statusEl = document.getElementById(`status-${sid}`);
         statusEl.textContent = msg.status;
@@ -396,14 +433,10 @@ function stopSession(sid) {
 function updateGlobalStats() {
   const cards = document.querySelectorAll('.session-card');
   document.getElementById('globalSessions').textContent = cards.length;
+}
 
-  let totalViews = 0;
-  cards.forEach(card => {
-    const sid = card.id.replace('session-', '');
-    const viewsEl = document.getElementById(`views-${sid}`);
-    if (viewsEl) totalViews += parseInt(viewsEl.textContent.replace(/,/g, '')) || 0;
-  });
-  document.getElementById('globalViews').textContent = totalViews.toLocaleString();
+function capitalize(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function escHtml(s) {
@@ -419,7 +452,7 @@ window.addEventListener('load', () => {
         sessions.forEach(s => {
           addSessionCard(s);
           // Update stats from saved state
-          document.getElementById(`views-${s.id}`).textContent = s.views.toLocaleString();
+          document.getElementById(`count-${s.id}`).textContent = (s.count || 0).toLocaleString();
           document.getElementById(`cycles-${s.id}`).textContent = s.cycles;
           const statusEl = document.getElementById(`status-${s.id}`);
           statusEl.textContent = s.status;
