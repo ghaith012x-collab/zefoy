@@ -55,6 +55,123 @@ def _parse_proxy(raw):
 
 PROXY_URL = _parse_proxy(os.environ.get("PROXY_URL", ""))
 USE_TOR = os.environ.get("USE_TOR", "true").strip().lower() in ("true", "1", "yes")
+
+# ═══════════════════════════════════════════════════════════════
+#  reCAPTCHA v2 SOLVER  (CapSolver primary, 2Captcha fallback)
+#  Set ONE of these env vars to enable automatic solving:
+#    CAPSOLVER_API_KEY   – https://capsolver.com  (~$0.8/1k solves)
+#    TWOCAPTCHA_API_KEY  – https://2captcha.com   (~$3/1k solves)
+# ═══════════════════════════════════════════════════════════════
+CAPSOLVER_API_KEY = os.environ.get("CAPSOLVER_API_KEY", "").strip()
+TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY", "").strip()
+
+
+def solve_recaptcha_v2(site_key, page_url, session=None, timeout=180):
+    """Solve reCAPTCHA v2 and return the g-recaptcha-response token, or ''."""
+    if CAPSOLVER_API_KEY:
+        token = _solve_capsolver(site_key, page_url, session, timeout)
+        if token:
+            return token
+
+    if TWOCAPTCHA_API_KEY:
+        token = _solve_2captcha(site_key, page_url, session, timeout)
+        if token:
+            return token
+
+    if not CAPSOLVER_API_KEY and not TWOCAPTCHA_API_KEY:
+        if session:
+            session.log("\u26a0\ufe0f No solver key set (CAPSOLVER_API_KEY or TWOCAPTCHA_API_KEY)")
+    return ""
+
+
+def _solve_capsolver(site_key, page_url, session, timeout):
+    """CapSolver: create task → poll result."""
+    try:
+        if session:
+            session.log("\U0001f9e9 Solving reCAPTCHA via CapSolver...")
+        r = requests.post("https://api.capsolver.com/createTask", json={
+            "clientKey": CAPSOLVER_API_KEY,
+            "task": {
+                "type": "ReCaptchaV2TaskProxyLess",
+                "websiteURL": page_url,
+                "websiteKey": site_key,
+            }
+        }, timeout=30)
+        data = r.json()
+        if data.get("errorId", 1) != 0:
+            if session:
+                session.log(f"\u26a0\ufe0f CapSolver error: {data.get('errorDescription', '?')[:80]}")
+            return None
+        task_id = data.get("taskId")
+        if not task_id:
+            return None
+
+        start = time.time()
+        while time.time() - start < timeout:
+            time.sleep(3)
+            r = requests.post("https://api.capsolver.com/getTaskResult", json={
+                "clientKey": CAPSOLVER_API_KEY,
+                "taskId": task_id,
+            }, timeout=30)
+            res = r.json()
+            if res.get("status") == "ready":
+                return res.get("solution", {}).get("gRecaptchaResponse") or None
+            if res.get("errorId", 0) != 0:
+                if session:
+                    session.log(f"\u26a0\ufe0f CapSolver poll error: {res.get('errorDescription', '?')[:80]}")
+                return None
+        if session:
+            session.log("\u26a0\ufe0f CapSolver timed out")
+        return None
+    except Exception as e:
+        if session:
+            session.log(f"\u26a0\ufe0f CapSolver exception: {str(e)[:60]}")
+        return None
+
+
+def _solve_2captcha(site_key, page_url, session, timeout):
+    """2Captcha: submit → poll result."""
+    try:
+        if session:
+            session.log("\U0001f9e9 Solving reCAPTCHA via 2Captcha...")
+        r = requests.post("https://2captcha.com/in.php", data={
+            "key": TWOCAPTCHA_API_KEY,
+            "method": "userrecaptcha",
+            "googlekey": site_key,
+            "pageurl": page_url,
+            "json": 1,
+        }, timeout=30)
+        data = r.json()
+        if data.get("status") != 1:
+            if session:
+                session.log(f"\u26a0\ufe0f 2Captcha error: {data.get('request', '?')[:80]}")
+            return None
+        captcha_id = data.get("request")
+
+        time.sleep(15)  # 2Captcha needs an initial processing delay
+        start = time.time()
+        while time.time() - start < timeout:
+            r = requests.get("https://2captcha.com/res.php", params={
+                "key": TWOCAPTCHA_API_KEY,
+                "action": "get",
+                "id": captcha_id,
+                "json": 1,
+            }, timeout=30)
+            res = r.json()
+            if res.get("status") == 1:
+                return res.get("request", "") or None
+            if res.get("request") != "CAPCHA_NOT_READY":
+                if session:
+                    session.log(f"\u26a0\ufe0f 2Captcha error: {res.get('request', '?')[:80]}")
+                return None
+            time.sleep(5)
+        if session:
+            session.log("\u26a0\ufe0f 2Captcha timed out")
+        return None
+    except Exception as e:
+        if session:
+            session.log(f"\u26a0\ufe0f 2Captcha exception: {str(e)[:60]}")
+        return None
 if not PROXY_URL and USE_TOR:
     PROXY_URL = "socks5://127.0.0.1:9050"
     USING_TOR = True
@@ -1312,9 +1429,29 @@ def run_qqtube_tab(session, tab_id):
                     continue
                 
                 recaptcha_on = check_data.get("recaptcha_enabled", True)
-                if recaptcha_on is not False:
+                recaptcha_key = check_data.get("recaptcha_key", "")
+                recaptcha_response = ""
+
+                if recaptcha_on is not False and recaptcha_key:
+                    # Try to solve reCAPTCHA using configured service
+                    session.log("\U0001f512 reCAPTCHA required \u2014 solving...")
+                    session.set_countdown("\U0001f9e9 Solving reCAPTCHA...")
+                    recaptcha_response = solve_recaptcha_v2(
+                        site_key=recaptcha_key,
+                        page_url=PAGE_URL,
+                        session=session,
+                        timeout=180,
+                    )
+                    if recaptcha_response:
+                        consecutive_recaptchas = 0
+                        session.log("\u2705 reCAPTCHA solved!")
+                    else:
+                        consecutive_recaptchas += 1
+                        session.log(f"\u26a0\ufe0f Could not solve reCAPTCHA (#{consecutive_recaptchas}), trying anyway...")
+                elif recaptcha_on is not False:
+                    # reCAPTCHA required but no site key returned
                     consecutive_recaptchas += 1
-                    session.log(f"\U0001f512 reCAPTCHA required \u2014 attempting submit anyway (#{consecutive_recaptchas})...")
+                    session.log(f"\U0001f512 reCAPTCHA required (no key) \u2014 submitting blind (#{consecutive_recaptchas})...")
                 else:
                     consecutive_recaptchas = 0
                     session.log("\U0001f513 No reCAPTCHA needed!")
@@ -1330,7 +1467,7 @@ def run_qqtube_tab(session, tab_id):
                     "quantity": quantity,
                     "ffpr": ffpr,
                     "token": token,
-                    "recaptcha_response": "",
+                    "recaptcha_response": recaptcha_response,
                     "dwell_seconds": dwell
                 }, timeout=30)
                 order_data = r.json()
