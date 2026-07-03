@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install browser dependencies manually (Playwright's --with-deps fails on Debian Trixie)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
+    wamerican \
     libnss3 \
     libnspr4 \
     libdbus-1-3 \
