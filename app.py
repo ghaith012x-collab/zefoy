@@ -9,6 +9,12 @@ import numpy as np
 # Thread-local tab prefix for log messages
 _tab_prefix = threading.local()
 
+# Global limit: max 3 Chromium browsers across ALL sessions at once
+MAX_GLOBAL_BROWSERS = 3
+_browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
+_active_browsers = 0
+_active_browsers_lock = threading.Lock()
+
 app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
 
@@ -400,6 +406,20 @@ def run_tab(session, tab_id):
 
             browser = None
             page = None
+
+            # Acquire a global browser slot (blocks if all 3 are in use)
+            got_slot = False
+            try:
+                if not _browser_semaphore.acquire(timeout=1):
+                    session.log("⏳ Waiting for browser slot (max 3 globally)...")
+                    _browser_semaphore.acquire()  # block until available
+                got_slot = True
+                with _active_browsers_lock:
+                    global _active_browsers
+                    _active_browsers += 1
+                    session.log(f"🟢 Browser slot acquired ({_active_browsers}/{MAX_GLOBAL_BROWSERS} in use)")
+            except Exception:
+                pass  # if acquire fails, still try to launch
 
             try:
                 with sync_playwright() as p:
@@ -918,6 +938,12 @@ def run_tab(session, tab_id):
                         browser.close()
                 except:
                     pass
+                # Release global browser slot
+                if got_slot:
+                    with _active_browsers_lock:
+                        _active_browsers = max(0, _active_browsers - 1)
+                    _browser_semaphore.release()
+                    got_slot = False
                 gc.collect()
 
         session.log("\U0001f6d1 Tab exhausted all restart attempts.")
@@ -974,7 +1000,8 @@ def tor_status():
 @app.route("/sessions")
 def list_sessions():
     with sessions_lock:
-        return jsonify([s.to_dict() for s in sessions.values()])
+        data = [s.to_dict() for s in sessions.values()]
+    return jsonify({"sessions": data, "browsers": _active_browsers, "maxBrowsers": MAX_GLOBAL_BROWSERS})
 
 
 @app.route("/start", methods=["POST"])

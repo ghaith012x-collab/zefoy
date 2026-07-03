@@ -193,10 +193,12 @@ evtSource.onmessage = function(e) {
 
     // If we don't have a card for this session yet, fetch it
     if (!c) {
-        fetch('/sessions').then(r => r.json()).then(list => {
-            list.forEach(s => {
+        fetch('/sessions').then(r => r.json()).then(data => {
+            (data.sessions || data).forEach(s => {
                 if (!cards[s.id]) createCard(s);
             });
+            if (data.browsers !== undefined) _globalBrowsers = data.browsers;
+            if (data.maxBrowsers !== undefined) _maxBrowsers = data.maxBrowsers;
         });
         return;
     }
@@ -245,6 +247,7 @@ evtSource.onmessage = function(e) {
     updateGlobalStats();
 };
 
+let _globalBrowsers = 0, _maxBrowsers = 3;
 function updateGlobalStats() {
     let active = 0, total = 0;
     for (const sid in cards) {
@@ -252,8 +255,16 @@ function updateGlobalStats() {
         const statusText = cards[sid].status?.textContent?.toLowerCase();
         if (statusText === 'running' || statusText === 'starting') active++;
     }
-    globalStats.textContent = `Active: ${active}   Total: ${total}`;
+    globalStats.textContent = `Active: ${active}   Total: ${total}   🌐 Browsers: ${_globalBrowsers}/${_maxBrowsers}`;
 }
+// Periodically refresh browser count
+setInterval(() => {
+    fetch('/sessions').then(r => r.json()).then(data => {
+        if (data.browsers !== undefined) _globalBrowsers = data.browsers;
+        if (data.maxBrowsers !== undefined) _maxBrowsers = data.maxBrowsers;
+        updateGlobalStats();
+    }).catch(() => {});
+}, 5000);
 
 function escapeHtml(text) {
     const d = document.createElement('div');
@@ -262,8 +273,11 @@ function escapeHtml(text) {
 }
 
 // Load existing sessions on page load
-fetch('/sessions').then(r => r.json()).then(list => {
-    list.forEach(s => createCard(s));
+fetch('/sessions').then(r => r.json()).then(data => {
+    (data.sessions || data).forEach(s => createCard(s));
+    if (data.browsers !== undefined) _globalBrowsers = data.browsers;
+    if (data.maxBrowsers !== undefined) _maxBrowsers = data.maxBrowsers;
+    updateGlobalStats();
 });
 </script>
 </body>
