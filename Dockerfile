@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install browser dependencies manually (Playwright's --with-deps fails on Debian Trixie)
+# Install browser dependencies + Tor
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     wamerican \
@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-unifont \
     fonts-liberation \
     fonts-noto-color-emoji \
+    tor \
     && rm -rf /var/lib/apt/lists/*
 
 # Install chromium browser only (no --with-deps)
@@ -37,4 +38,4 @@ RUN playwright install chromium
 COPY . .
 
 EXPOSE 8080
-CMD ["gunicorn", "-w", "1", "--threads", "4", "--timeout", "600", "-b", "0.0.0.0:8080", "app:app"]
+CMD bash -c "tor & sleep 3 && exec gunicorn -w 1 --threads 4 --timeout 600 -b 0.0.0.0:8080 app:app"

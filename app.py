@@ -9,8 +9,9 @@ import numpy as np
 app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
 
-# Optional proxy: set PROXY_URL env var in Railway
+# Proxy support: set PROXY_URL env var, or leave empty to auto-use Tor (built into container)
 # Supports formats: http://user:pass@host:port  OR  host:port:user:pass  OR  host:port
+# Set USE_TOR=false to disable Tor fallback
 def _parse_proxy(raw):
     raw = raw.strip()
     if not raw:
@@ -25,6 +26,12 @@ def _parse_proxy(raw):
     return raw  # try as-is
 
 PROXY_URL = _parse_proxy(os.environ.get("PROXY_URL", ""))
+USE_TOR = os.environ.get("USE_TOR", "true").strip().lower() in ("true", "1", "yes")
+if not PROXY_URL and USE_TOR:
+    PROXY_URL = "socks5://127.0.0.1:9050"
+    USING_TOR = True
+else:
+    USING_TOR = False
 
 # ═══════════════════════════════════════════════════════════════
 #  SERVICES
@@ -264,7 +271,10 @@ def run_session(session):
                 "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
             }
             if PROXY_URL:
-                session.log(f"🌐 Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
+                if USING_TOR:
+                    session.log("🧅 Routing through Tor (anonymous IP)...")
+                else:
+                    session.log(f"🌐 Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
                 launch_opts["proxy"] = {"server": PROXY_URL}
             browser = p.chromium.launch(**launch_opts)
             page = browser.new_page()
