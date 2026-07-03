@@ -17,11 +17,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY torrc /etc/tor/torrc
-COPY start.sh .
-RUN chmod +x start.sh
-
 COPY . .
 
 EXPOSE 5000
 
-CMD ["./start.sh"]
+CMD tor -f /etc/tor/torrc & sleep 3 && python app.py
