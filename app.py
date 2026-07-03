@@ -324,6 +324,14 @@ def run_tab(session, tab_id):
             if USING_TOR:
                 tor_port = 9050 + (tab_id % 10)
                 session.log(f"🧅 Routing through Tor (port {tor_port})...")
+                # Wait for Tor to be ready
+                import os
+                for _tw in range(60):
+                    if os.path.exists("/tmp/tor_ready"):
+                        break
+                    if _tw == 0:
+                        session.log("⏳ Waiting for Tor to bootstrap...")
+                    time.sleep(1)
                 launch_opts["proxy"] = {
                     "server": f"socks5://127.0.0.1:{tor_port}",
                 }
