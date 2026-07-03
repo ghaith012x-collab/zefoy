@@ -1028,8 +1028,9 @@ def run_tab(session, tab_id):
 
 
 def run_qqtube_tab(session, tab_id):
-    """QQTube free likes via pure HTTP API - no Chromium needed! Much faster & lighter."""
+    """QQTube free likes - gets real FingerprintJS ID via browser, then uses HTTP API."""
     import gc
+    global _active_browsers
     multi = session.num_tabs > 1
     _tab_prefix.value = f"[T{tab_id+1}] " if multi else ""
     
@@ -1060,8 +1061,96 @@ def run_qqtube_tab(session, tab_id):
             
             ips_tried += 1
             
-            # Generate unique fingerprint (mimics FingerprintJS visitor ID)
-            ffpr = hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:32]
+            # ── Get REAL FingerprintJS visitorId via headless browser ──
+            # QQTube validates the fingerprint against their FingerprintJS Pro
+            # backend on the "start" call.  A fake/random hash is rejected with
+            # "Unable to verify your request".  We must run the real SDK in a
+            # browser to obtain a genuine visitorId tied to our current IP.
+            ffpr = ""
+            cookies_dict = {}
+            session.log(f"\U0001f310 [{ips_tried}] Obtaining browser fingerprint...")
+            session.set_countdown("\U0001f50d Getting browser fingerprint...")
+            
+            got_fp_slot = False
+            try:
+                if not _browser_semaphore.acquire(timeout=1):
+                    session.log("\u23f3 Waiting for browser slot...")
+                    _browser_semaphore.acquire()
+                got_fp_slot = True
+                with _active_browsers_lock:
+                    _active_browsers += 1
+            except:
+                pass
+            
+            try:
+                with sync_playwright() as p:
+                    fp_launch_opts = {
+                        "headless": True,
+                        "args": [
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--single-process",
+                            "--js-flags=--max-old-space-size=128",
+                        ],
+                    }
+                    if USING_TOR:
+                        fp_launch_opts["proxy"] = {"server": f"socks5://127.0.0.1:{tor_port}"}
+                    elif PROXY_URL:
+                        fp_launch_opts["proxy"] = {"server": PROXY_URL}
+                    
+                    fp_browser = p.chromium.launch(**fp_launch_opts)
+                    fp_page = fp_browser.new_page()
+                    fp_page.goto(PAGE_URL, wait_until="domcontentloaded", timeout=30000)
+                    time.sleep(3)
+                    
+                    # Run the real FingerprintJS SDK to get a genuine visitorId
+                    try:
+                        ffpr = fp_page.evaluate("""() => {
+                            return new Promise(async (resolve) => {
+                                try {
+                                    const mod = await import(
+                                        'https://static1.qqtube.com/web/v3/L7VMDtfAtpoCHApk30SD'
+                                    );
+                                    const fp = await mod.load({
+                                        endpoint: [
+                                            'https://static1.qqtube.com',
+                                            mod.defaultEndpoint
+                                        ]
+                                    });
+                                    const result = await fp.get();
+                                    resolve(result.visitorId || '');
+                                } catch(e) {
+                                    resolve('');
+                                }
+                            });
+                        }""")
+                    except Exception as fp_err:
+                        session.log(f"\u26a0\ufe0f FingerprintJS error: {str(fp_err)[:80]}")
+                    
+                    # Grab cookies set by QQTube / FingerprintJS
+                    try:
+                        for c in fp_page.context.cookies():
+                            cookies_dict[c['name']] = c['value']
+                    except:
+                        pass
+                    
+                    fp_browser.close()
+            except Exception as browser_err:
+                session.log(f"\u26a0\ufe0f Browser error: {str(browser_err)[:80]}")
+            finally:
+                if got_fp_slot:
+                    _browser_semaphore.release()
+                    with _active_browsers_lock:
+                        _active_browsers = max(0, _active_browsers - 1)
+            
+            if not ffpr:
+                session.log("\u26a0\ufe0f Could not get fingerprint, retrying in 5s...")
+                time.sleep(5)
+                gc.collect()
+                continue
+            
+            session.log(f"\u2705 Real fingerprint: {ffpr[:12]}...")
             
             # Create fresh HTTP session with Tor proxy
             http_sess = requests.Session()
@@ -1074,6 +1163,9 @@ def run_qqtube_tab(session, tab_id):
                 "Accept": "application/json, text/plain, */*",
                 "Accept-Language": "en-US,en;q=0.9",
             })
+            # Forward cookies from browser session
+            for cname, cval in cookies_dict.items():
+                http_sess.cookies.set(cname, cval)
             
             if USING_TOR:
                 http_sess.proxies = {
@@ -1085,6 +1177,16 @@ def run_qqtube_tab(session, tab_id):
                 http_sess.proxies = {"http": PROXY_URL, "https": PROXY_URL}
             
             try:
+                # Revisit ping (mimics real browser page-load behavior)
+                try:
+                    http_sess.post(QQTUBE_API, json={
+                        "action": "revisit",
+                        "ffpr": ffpr,
+                        "page_url": PAGE_URL
+                    }, timeout=15)
+                except:
+                    pass
+                
                 # STEP 1: Get services + check cooldown
                 session.log(f"\U0001f310 [{ips_tried}] Checking services...")
                 session.set_countdown("\U0001f50d Checking if this IP can submit...")
