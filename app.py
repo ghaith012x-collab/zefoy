@@ -610,45 +610,55 @@ def stop(sid):
     return jsonify({"ok": True})
 
 
-@app.route("/stream/<int:sid>")
-def stream(sid):
-    with sessions_lock:
-        session = sessions.get(sid)
-    if not session:
-        return jsonify({"error": "Not found"}), 404
-
+@app.route("/stream/all")
+def stream_all():
+    """Single multiplexed SSE stream for ALL sessions — avoids browser connection limits."""
     def generate():
-        last_idx = 0
-        last_countdown = ""
+        tracking = {}  # sid → {last_log_idx, last_countdown, ended_sent}
+
         while True:
-            # New log lines
-            current_len = len(session.logs)
-            while last_idx < current_len:
-                data = json.dumps({"type": "log", "text": session.logs[last_idx]})
-                yield f"data: {data}\n\n"
-                last_idx += 1
+            with sessions_lock:
+                current_sessions = dict(sessions)
 
-            # Countdown update (replaces in-place on frontend)
-            cd = session.countdown
-            if cd != last_countdown:
-                last_countdown = cd
-                data = json.dumps({"type": "countdown", "text": cd})
+            for sid, session in current_sessions.items():
+                if sid not in tracking:
+                    tracking[sid] = {"last_log_idx": 0, "last_countdown": "", "ended_sent": False}
+
+                t = tracking[sid]
+
+                # New log lines
+                current_len = len(session.logs)
+                while t["last_log_idx"] < current_len:
+                    data = json.dumps({"type": "log", "sid": sid, "text": session.logs[t["last_log_idx"]]})
+                    yield f"data: {data}\n\n"
+                    t["last_log_idx"] += 1
+
+                # Countdown update
+                cd = session.countdown
+                if cd != t["last_countdown"]:
+                    t["last_countdown"] = cd
+                    data = json.dumps({"type": "countdown", "sid": sid, "text": cd})
+                    yield f"data: {data}\n\n"
+
+                # Stats update
+                data = json.dumps({
+                    "type": "stats",
+                    "sid": sid,
+                    "count": session.total_count,
+                    "unit": session.svc["unit"],
+                    "cycles": session.cycles,
+                    "status": session.status,
+                })
                 yield f"data: {data}\n\n"
 
-            # Stats update
-            data = json.dumps({
-                "type": "stats",
-                "count": session.total_count,
-                "unit": session.svc["unit"],
-                "cycles": session.cycles,
-                "status": session.status,
-            })
-            yield f"data: {data}\n\n"
+                # Ended signal (once)
+                if session.status in ("stopped", "error") and not t["ended_sent"]:
+                    data = json.dumps({"type": "ended", "sid": sid, "status": session.status})
+                    yield f"data: {data}\n\n"
+                    t["ended_sent"] = True
 
-            if session.status in ("stopped", "error"):
-                data = json.dumps({"type": "ended", "status": session.status})
-                yield f"data: {data}\n\n"
-                break
+            # Clean up tracking for removed sessions
+            tracking = {sid: v for sid, v in tracking.items() if sid in current_sessions}
 
             time.sleep(0.5)
 
@@ -657,6 +667,19 @@ def stream(sid):
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+@app.route("/remove/<int:sid>", methods=["POST"])
+def remove_session(sid):
+    """Remove a stopped/error session from the list."""
+    with sessions_lock:
+        session = sessions.get(sid)
+        if not session:
+            return jsonify({"error": "Not found"}), 404
+        if session.status not in ("stopped", "error"):
+            return jsonify({"error": "Can only remove stopped sessions"}), 400
+        del sessions[sid]
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
