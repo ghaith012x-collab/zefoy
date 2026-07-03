@@ -1,0 +1,11 @@
+SocksPort 9050 SessionGroup=0
+SocksPort 9051 SessionGroup=1
+SocksPort 9052 SessionGroup=2
+SocksPort 9053 SessionGroup=3
+SocksPort 9054 SessionGroup=4
+SocksPort 9055 SessionGroup=5
+SocksPort 9056 SessionGroup=6
+SocksPort 9057 SessionGroup=7
+SocksPort 9058 SessionGroup=8
+SocksPort 9059 SessionGroup=9
+DataDirectory /var/lib/tor

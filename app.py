@@ -320,13 +320,12 @@ def run_tab(session, tab_id):
                 "headless": True,
                 "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
             }
-            # Each tab gets unique Tor credentials → different IP
+            # Each tab gets its own Tor SOCKS port (9050-9059) → different IP
             if USING_TOR:
-                session.log("🧅 Routing through Tor (anonymous IP)...")
+                tor_port = 9050 + (tab_id % 10)
+                session.log(f"🧅 Routing through Tor (port {tor_port})...")
                 launch_opts["proxy"] = {
-                    "server": "socks5://127.0.0.1:9050",
-                    "username": f"s{session.id}t{tab_id}",
-                    "password": "x",
+                    "server": f"socks5://127.0.0.1:{tor_port}",
                 }
             elif PROXY_URL:
                 session.log(f"🌐 Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
