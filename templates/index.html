@@ -7,145 +7,199 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: #0f0f0f;
-            color: #fff;
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             display: flex;
             justify-content: center;
-            align-items: center;
+            align-items: flex-start;
             min-height: 100vh;
-            padding: 20px;
+            padding: 40px 20px;
         }
         .container {
             width: 100%;
-            max-width: 420px;
-            background: #1a1a1a;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            max-width: 480px;
         }
         h1 {
-            font-size: 24px;
-            margin-bottom: 8px;
-            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            font-size: 28px;
+            margin-bottom: 6px;
+            background: linear-gradient(90deg, #00d4ff, #a855f7);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
-        p { color: #888; margin-bottom: 24px; font-size: 14px; }
+        .subtitle { color: #666; margin-bottom: 24px; font-size: 14px; }
+
         input {
             width: 100%;
-            padding: 16px;
-            border: 1px solid #333;
-            border-radius: 12px;
-            background: #0f0f0f;
+            padding: 16px 18px;
+            border: 1px solid #2a2a2a;
+            border-radius: 14px;
+            background: #141414;
             color: #fff;
             font-size: 15px;
             margin-bottom: 12px;
             outline: none;
-            transition: border 0.2s;
+            transition: all 0.2s;
         }
-        input:focus { border-color: #00d4ff; }
+        input:focus { border-color: #00d4ff; background: #1a1a1a; }
         button {
             width: 100%;
             padding: 16px;
             border: none;
-            border-radius: 12px;
-            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            border-radius: 14px;
+            background: linear-gradient(90deg, #00d4ff, #a855f7);
             color: #fff;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: transform 0.1s, opacity 0.2s;
+            transition: all 0.2s;
         }
+        button:hover { opacity: 0.9; }
         button:active { transform: scale(0.98); }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .status {
-            margin-top: 20px;
-            padding: 16px;
-            border-radius: 12px;
-            font-size: 14px;
-            display: none;
-            word-break: break-word;
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .log-container {
+            margin-top: 24px;
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 16px;
+            padding: 20px;
+            min-height: 200px;
+            max-height: 500px;
+            overflow-y: auto;
         }
-        .status.show { display: block; }
-        .status.success { background: rgba(0, 255, 100, 0.1); color: #00ff64; border: 1px solid rgba(0, 255, 100, 0.2); }
-        .status.error { background: rgba(255, 0, 0, 0.1); color: #ff4444; border: 1px solid rgba(255, 0, 0, 0.2); }
-        .status.loading { background: rgba(0, 212, 255, 0.1); color: #00d4ff; border: 1px solid rgba(0, 212, 255, 0.2); }
-        .status.timeout { background: rgba(255, 165, 0, 0.1); color: #ffa500; border: 1px solid rgba(255, 165, 0, 0.2); }
+        .log-container.hidden { display: none; }
+        .log-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #555;
+            margin-bottom: 12px;
+        }
+        .log-entry {
+            padding: 8px 0;
+            border-bottom: 1px solid #1a1a1a;
+            font-size: 13px;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            animation: fadeIn 0.3s ease;
+        }
+        .log-entry:last-child { border-bottom: none; }
+        .log-step {
+            background: #1a1a1a;
+            color: #888;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 6px;
+            min-width: 32px;
+            text-align: center;
+            font-weight: 600;
+        }
+        .log-entry.success .log-step { background: rgba(0,255,100,0.15); color: #00ff64; }
+        .log-entry.error .log-step { background: rgba(255,0,0,0.15); color: #ff4444; }
+        .log-entry.active .log-step { background: rgba(0,212,255,0.15); color: #00d4ff; }
+        .log-msg { flex: 1; line-height: 1.5; word-break: break-word; }
+        .log-msg.html-snippet { font-family: monospace; font-size: 11px; color: #888; }
+
         .spinner {
             display: inline-block;
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
             border: 2px solid #00d4ff;
             border-top-color: transparent;
             border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 8px;
+            animation: spin 0.8s linear infinite;
+            margin-right: 6px;
             vertical-align: middle;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+        .final-success { color: #00ff64; font-weight: 600; }
+        .final-error { color: #ff4444; font-weight: 600; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Zefoy Auto</h1>
-        <p>Paste your TikTok link. We'll handle the rest.</p>
+        <p class="subtitle">Paste link. Watch it work live.</p>
         <input type="text" id="url" placeholder="https://vm.tiktok.com/..." autocomplete="off">
-        <button id="go" onclick="send()">Confirm & Send Views</button>
-        <div id="status" class="status"></div>
+        <button id="go" onclick="start()">Confirm & Send Views</button>
+
+        <div id="logs" class="log-container hidden">
+            <div class="log-title">Live Activity</div>
+            <div id="log-content"></div>
+        </div>
     </div>
 
     <script>
-        async function send() {
+        function addLog(step, msg, type='normal') {
+            const content = document.getElementById('log-content');
+            const div = document.createElement('div');
+            div.className = `log-entry ${type}`;
+            div.innerHTML = `<span class="log-step">${step}</span><span class="log-msg">${msg}</span>`;
+            content.appendChild(div);
+            document.getElementById('logs').classList.remove('hidden');
+            content.scrollTop = content.scrollHeight;
+        }
+
+        function start() {
             const url = document.getElementById('url').value.trim();
             const btn = document.getElementById('go');
-            const status = document.getElementById('status');
+            const content = document.getElementById('log-content');
 
-            if (!url) {
-                status.className = 'status show error';
-                status.textContent = 'Enter a TikTok URL';
-                return;
-            }
-
+            if (!url) return;
             btn.disabled = true;
-            status.className = 'status show loading';
-            status.innerHTML = '<span class="spinner"></span>Running automation (this takes ~30-60s)...';
+            content.innerHTML = '';
+            document.getElementById('logs').classList.remove('hidden');
+            addLog('...', 'Starting automation...', 'active');
 
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 200000); // 200s client timeout
+            fetch('/stream', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({url})
+            }).then(res => {
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
 
-                const res = await fetch('/send', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({url}),
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
+                function read() {
+                    reader.read().then(({done, value}) => {
+                        if (done) {
+                            btn.disabled = false;
+                            return;
+                        }
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n\n');
+                        lines.forEach(line => {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6));
+                                    let type = 'normal';
+                                    if (data.step === 99) type = 'error';
+                                    else if (data.done && data.step !== 99) type = 'success';
+                                    else type = 'active';
 
-                const data = await res.json();
+                                    let msg = data.message;
+                                    if (msg.includes('HTML snippet')) {
+                                        msg = msg.replace('Page HTML snippet: ', '');
+                                        addLog(data.step, msg, type);
+                                    } else {
+                                        addLog(data.step, msg, type);
+                                    }
 
-                if (data.status === 'success') {
-                    status.className = 'status show success';
-                    status.textContent = data.message;
-                } else if (data.status === 'timeout') {
-                    status.className = 'status show timeout';
-                    status.textContent = data.message + ' — Zefoy may be slow, try again';
-                } else {
-                    status.className = 'status show error';
-                    status.textContent = data.message || 'Failed';
+                                    if (data.done) btn.disabled = false;
+                                } catch(e) {}
+                            }
+                        });
+                        read();
+                    });
                 }
-            } catch (e) {
-                if (e.name === 'AbortError') {
-                    status.className = 'status show timeout';
-                    status.textContent = 'Request timed out — Zefoy is very slow right now';
-                } else {
-                    status.className = 'status show error';
-                    status.textContent = 'Network error: ' + e.message;
-                }
-            }
-
-            btn.disabled = false;
+                read();
+            }).catch(e => {
+                addLog('ERR', 'Connection failed: ' + e.message, 'error');
+                btn.disabled = false;
+            });
         }
     </script>
 </body>
