@@ -277,7 +277,7 @@ class Session:
             self.id = Session._counter
         self.video_url = video_url
         self.service = service  # key into SERVICES dict
-        self.num_tabs = max(1, min(num_tabs, 10))  # clamp 1-10
+        self.num_tabs = max(1, min(num_tabs, 3))  # clamp 1-3
         self.status = "starting"
         self.total_count = 0
         self.cycles = 0
@@ -363,7 +363,9 @@ def run_session(session):
 
 
 def run_tab(session, tab_id):
-    """Runs a single bot tab — each gets its own browser + Tor circuit."""
+    """Runs a single bot tab — each gets its own browser + Tor circuit.
+    Wrapped in an outer retry loop so it NEVER permanently dies from crashes."""
+    import gc
     svc = session.svc
     svc_name = svc["name"]
     btn_cls = svc["button_class"]
@@ -375,517 +377,547 @@ def run_tab(session, tab_id):
     # Set thread-local prefix for log messages
     _tab_prefix.value = f"[T{tab_id+1}] " if multi else ""
 
+    MAX_FULL_RESTARTS = 100  # effectively infinite — keep retrying forever
+    backoff = 5
+
+    with session.count_lock:
+        session.active_tabs += 1
+
     try:
-        with sync_playwright() as p:
-            if multi:
-                session.log(f"🚀 Starting tab...")
+        for full_restart in range(MAX_FULL_RESTARTS):
+            if session.stop_event.is_set():
+                return
 
-            launch_opts = {
-                "headless": True,
-                "args": [
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-extensions",
-                    "--disable-background-networking",
-                    "--disable-default-apps",
-                    "--disable-sync",
-                    "--disable-translate",
-                    "--no-first-run",
-                    "--disable-background-timer-throttling",
-                    "--disable-renderer-backgrounding",
-                    "--disable-backgrounding-occluded-windows",
-                    "--disable-component-extensions-with-background-pages",
-                    "--disable-features=TranslateUI",
-                    "--renderer-process-limit=1",
-                    "--js-flags=--max-old-space-size=128",
-                    "--disable-software-rasterizer",
-                    "--disable-logging",
-                    "--disable-hang-monitor",
-                ],
-            }
-            # Each tab gets its own Tor SOCKS port (9050-9059) → different IP
-            if USING_TOR:
-                tor_port = 9050 + (tab_id % 10)
-                session.log(f"🧅 Routing through Tor (port {tor_port})...")
-                # Wait for Tor to be ready
-                import os
-                for _tw in range(60):
-                    if os.path.exists("/tmp/tor_ready"):
-                        break
-                    if _tw == 0:
-                        session.log("⏳ Waiting for Tor to bootstrap...")
-                    time.sleep(1)
-                launch_opts["proxy"] = {
-                    "server": f"socks5://127.0.0.1:{tor_port}",
-                }
-            elif PROXY_URL:
-                session.log(f"🌐 Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
-                launch_opts["proxy"] = {"server": PROXY_URL}
+            if full_restart > 0:
+                wait_time = min(int(backoff), 30)
+                session.log(f"\u267b\ufe0f Full restart #{full_restart} (waiting {wait_time}s)...")
+                time.sleep(wait_time)
+                backoff = min(backoff * 1.5, 30)
+                gc.collect()
+            else:
+                if multi:
+                    session.log(f"\U0001f680 Starting tab...")
 
-            browser = p.chromium.launch(**launch_opts)
-
-            with session.count_lock:
-                session.active_tabs += 1
+            browser = None
+            page = None
 
             try:
-                page = browser.new_page(viewport={"width": 800, "height": 600})
-                page.on("dialog", lambda d: d.accept())
+                with sync_playwright() as p:
+                    launch_opts = {
+                        "headless": True,
+                        "args": [
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--disable-extensions",
+                            "--disable-background-networking",
+                            "--disable-default-apps",
+                            "--disable-sync",
+                            "--disable-translate",
+                            "--no-first-run",
+                            "--disable-background-timer-throttling",
+                            "--disable-renderer-backgrounding",
+                            "--disable-backgrounding-occluded-windows",
+                            "--disable-component-extensions-with-background-pages",
+                            "--disable-features=TranslateUI",
+                            "--renderer-process-limit=1",
+                            "--js-flags=--max-old-space-size=128",
+                            "--disable-software-rasterizer",
+                            "--disable-logging",
+                            "--disable-hang-monitor",
+                            "--single-process",
+                            "--disable-ipc-flooding-protection",
+                            "--memory-pressure-off",
+                        ],
+                    }
+                    if USING_TOR:
+                        tor_port = 9050 + (tab_id % 10)
+                        if full_restart == 0:
+                            session.log(f"\U0001f9c5 Routing through Tor (port {tor_port})...")
+                        import os
+                        for _tw in range(60):
+                            if os.path.exists("/tmp/tor_ready"):
+                                break
+                            if _tw == 0:
+                                session.log("\u23f3 Waiting for Tor to bootstrap...")
+                            time.sleep(1)
+                        launch_opts["proxy"] = {
+                            "server": f"socks5://127.0.0.1:{tor_port}",
+                        }
+                    elif PROXY_URL:
+                        if full_restart == 0:
+                            session.log(f"\U0001f310 Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
+                        launch_opts["proxy"] = {"server": PROXY_URL}
 
-                def _is_crashed(pg):
-                    """Check if the page has crashed."""
-                    try:
-                        pg.title()
-                        return False
-                    except Exception as e:
-                        return "crash" in str(e).lower() or "target closed" in str(e).lower()
+                    browser = p.chromium.launch(**launch_opts)
+                    page = browser.new_page(viewport={"width": 800, "height": 600})
+                    page.on("dialog", lambda d: d.accept())
 
-                # ── Load zefoy (with crash recovery) ──
-                MAX_BROWSER_RESTARTS = 3
-                for _restart in range(MAX_BROWSER_RESTARTS):
-                    if session.stop_event.is_set():
-                        return
-
-                    if _restart > 0:
-                        session.log(f"🔄 Restarting browser (attempt {_restart + 1}/{MAX_BROWSER_RESTARTS})...")
-                        try: browser.close()
-                        except: pass
-                        time.sleep(3)
-                        browser = p.chromium.launch(**launch_opts)
-                        page = browser.new_page(viewport={"width": 800, "height": 600})
-                        page.on("dialog", lambda d: d.accept())
-
-                    try:
-                        session.log("🌐 Loading zefoy.com...")
-                        page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
-                        time.sleep(5)
-
-                        if _is_crashed(page):
-                            session.log("💥 Page crashed on load!")
-                            continue
-
-                        break  # loaded successfully
-                    except Exception as load_err:
-                        if "crash" in str(load_err).lower() or "target closed" in str(load_err).lower():
-                            session.log(f"💥 Browser crashed on load: {load_err}")
-                            continue
-                        raise
-                else:
-                    session.log(f"❌ Browser crashed {MAX_BROWSER_RESTARTS} times. Stopping tab.")
-                    return
-
-                # ── Solve captcha ──
-                session.log("🔐 Checking for captcha...")
-
-                captcha_detected = False
-                page_ready = False
-
-                for page_attempt in range(10):
-                    if session.stop_event.is_set():
-                        break
-
-                    # Check if site is returning an error page
-                    try:
-                        page_title = page.title().lower()
-                        page_text = page.inner_text("body")[:200].lower()
-                        if "502" in page_title or "502 bad gateway" in page_text:
-                            session.log(f"🔴 Zefoy is down (502 error), retrying ({page_attempt + 1}/10)...")
-                            time.sleep(10 + page_attempt * 3)
-                            page.reload(wait_until="domcontentloaded")
-                            time.sleep(5)
-                            continue
-                        if "503" in page_title or "cloudflare" in page_text or "just a moment" in page_text:
-                            session.log(f"🔴 Zefoy loading/Cloudflare check ({page_attempt + 1}/10)...")
-                            time.sleep(10 + page_attempt * 3)
-                            page.reload(wait_until="domcontentloaded")
-                            time.sleep(5)
-                            continue
-                    except:
-                        pass
-
-                    # Check for captcha elements
-                    try:
-                        page.locator("#captcha-img, .wrapper-capth, #captchatoken").first.wait_for(state="visible", timeout=10000)
-                        captcha_detected = True
-                        break
-                    except:
-                        pass
-
-                    # No captcha — maybe already past it?
-                    try:
-                        page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=5000)
-                        session.log("✅ No captcha needed — service buttons already visible")
-                        page_ready = True
-                        break
-                    except:
-                        pass
-
-                    # Neither found — reload and try again
-                    session.log(f"⚠️ Page not ready, reloading (attempt {page_attempt + 1}/10)...")
-                    page.reload(wait_until="domcontentloaded")
-                    time.sleep(5 + page_attempt * 2)  # increasing wait
-
-                if captcha_detected:
-                    session.log("🔐 Captcha detected, solving...")
-                    for captcha_attempt in range(15):
-                        if session.stop_event.is_set():
-                            break
+                    def _safe_check(pg):
+                        """Check if page is alive. Returns True if OK, False if crashed."""
                         try:
-                            # Wait for captcha image to actually appear
-                            captcha_img = page.locator("#captcha-img, img[src*='CAPTCHA'], img[src*='captcha']")
-                            try:
-                                captcha_img.first.wait_for(state="visible", timeout=10000)
-                            except:
-                                # Maybe page hasn't loaded — reload and retry
-                                session.log("⚠️ Captcha image not loading, reloading page...")
+                            pg.title()
+                            return True
+                        except:
+                            return False
+
+                    # \u2500\u2500 Load zefoy \u2500\u2500
+                    session.log("\U0001f310 Loading zefoy.com...")
+                    page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
+                    time.sleep(5)
+
+                    if not _safe_check(page):
+                        session.log("\U0001f4a5 Page crashed on load, restarting...")
+                        continue
+
+                    # \u2500\u2500 Check page / Solve captcha \u2500\u2500
+                    session.log("\U0001f510 Checking for captcha...")
+
+                    captcha_detected = False
+                    page_ready = False
+
+                    for page_attempt in range(10):
+                        if session.stop_event.is_set():
+                            return
+
+                        if not _safe_check(page):
+                            session.log("\U0001f4a5 Crashed during page check, restarting...")
+                            break
+
+                        try:
+                            page_title = page.title().lower()
+                            page_text = page.inner_text("body")[:200].lower()
+                            if "502" in page_title or "502 bad gateway" in page_text:
+                                session.log(f"\U0001f534 Zefoy is down (502 error), retrying ({page_attempt + 1}/10)...")
+                                time.sleep(10 + page_attempt * 3)
                                 page.reload(wait_until="domcontentloaded")
                                 time.sleep(5)
                                 continue
-
-                            session.log(f"🔐 Solving captcha (attempt {captcha_attempt + 1})...")
-                            time.sleep(2)
-                            captcha_bytes = captcha_img.first.screenshot()
-                            answer = solve_captcha(captcha_bytes)
-
-                            if not answer:
-                                session.log("⚠️ OCR failed, refreshing captcha...")
-                                try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
-                                except: page.reload(wait_until="domcontentloaded")
-                                time.sleep(3)
+                            if "503" in page_title or "cloudflare" in page_text or "just a moment" in page_text:
+                                session.log(f"\U0001f534 Zefoy loading/Cloudflare check ({page_attempt + 1}/10)...")
+                                time.sleep(10 + page_attempt * 3)
+                                page.reload(wait_until="domcontentloaded")
+                                time.sleep(5)
                                 continue
+                        except:
+                            pass
 
-                            session.log(f"🔤 Answer: '{answer}'")
-                            # Fill and submit
-                            captcha_input = page.locator("#captchatoken, input[name='captcha_secure'], input[placeholder*='aptcha']")
-                            captcha_input.first.fill(answer)
-                            time.sleep(0.5)
-                            page.locator("button.submit-captcha, form .btn-primary[type='submit']").first.click()
-                            time.sleep(5)
+                        try:
+                            page.locator("#captcha-img, .wrapper-capth, #captchatoken").first.wait_for(state="visible", timeout=10000)
+                            captcha_detected = True
+                            break
+                        except:
+                            pass
 
-                            # Check if solved — any service button should appear
-                            try:
-                                page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=8000)
-                                session.log("✅ Captcha solved!")
+                        try:
+                            page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=5000)
+                            session.log("\u2705 No captcha needed \u2014 service buttons already visible")
+                            page_ready = True
+                            break
+                        except:
+                            pass
+
+                        session.log(f"\u26a0\ufe0f Page not ready, reloading (attempt {page_attempt + 1}/10)...")
+                        page.reload(wait_until="domcontentloaded")
+                        time.sleep(5 + page_attempt * 2)
+                    else:
+                        session.log("\u26a0\ufe0f Page never became ready, restarting...")
+                        continue
+
+                    if not captcha_detected and not page_ready:
+                        continue
+
+                    if captcha_detected:
+                        session.log("\U0001f510 Captcha detected, solving...")
+                        captcha_solved = False
+                        for captcha_attempt in range(20):
+                            if session.stop_event.is_set():
+                                return
+
+                            if not _safe_check(page):
+                                session.log("\U0001f4a5 Crashed during captcha, restarting...")
                                 break
-                            except:
-                                session.log(f"❌ Wrong answer '{answer}', retrying...")
-                                # Dismiss any error modal
-                                try: page.locator(".modal .btn-secondary, .modal .close, .swal2-confirm, [class*='close']").first.click()
-                                except: pass
-                                time.sleep(1)
-                                # Refresh captcha
-                                try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
-                                except: pass
-                                time.sleep(3)
-                        except Exception as e:
-                            err_str = str(e).lower()
-                            if "crash" in err_str or "target closed" in err_str:
-                                session.log(f"💥 Page crashed during captcha! Restarting browser...")
-                                try: browser.close()
-                                except: pass
-                                time.sleep(3)
-                                browser = p.chromium.launch(**launch_opts)
-                                page = browser.new_page(viewport={"width": 800, "height": 600})
-                                page.on("dialog", lambda d: d.accept())
+
+                            try:
+                                captcha_img = page.locator("#captcha-img, img[src*='CAPTCHA'], img[src*='captcha']")
                                 try:
-                                    page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
-                                    time.sleep(5)
+                                    captcha_img.first.wait_for(state="visible", timeout=10000)
                                 except:
-                                    session.log("❌ Failed to reload after crash. Stopping tab.")
-                                    return
-                            else:
-                                session.log(f"⚠️ Captcha error: {e}")
-                            time.sleep(2)
+                                    session.log("\u26a0\ufe0f Captcha image not loading, reloading page...")
+                                    page.reload(wait_until="domcontentloaded")
+                                    time.sleep(5)
+                                    continue
 
-                # ── Click service button ──
-                session.log(f"{emoji} Looking for {svc_name} button...")
-                try:
-                    page.locator(f".{btn_cls}").wait_for(timeout=30000)
-                except:
-                    # Check if the button exists but is disabled
+                                session.log(f"\U0001f510 Solving captcha (attempt {captcha_attempt + 1})...")
+                                time.sleep(2)
+                                captcha_bytes = captcha_img.first.screenshot()
+                                answer = solve_captcha(captcha_bytes)
+
+                                if not answer:
+                                    session.log("\u26a0\ufe0f OCR failed, refreshing captcha...")
+                                    try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
+                                    except: page.reload(wait_until="domcontentloaded")
+                                    time.sleep(3)
+                                    continue
+
+                                session.log(f"\U0001f524 Answer: '{answer}'")
+                                captcha_input = page.locator("#captchatoken, input[name='captcha_secure'], input[placeholder*='aptcha']")
+                                captcha_input.first.fill(answer)
+                                time.sleep(0.5)
+                                page.locator("button.submit-captcha, form .btn-primary[type='submit']").first.click()
+                                time.sleep(5)
+
+                                try:
+                                    page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=8000)
+                                    session.log("\u2705 Captcha solved!")
+                                    captcha_solved = True
+                                    break
+                                except:
+                                    session.log(f"\u274c Wrong answer '{answer}', retrying...")
+                                    try: page.locator(".modal .btn-secondary, .modal .close, .swal2-confirm, [class*='close']").first.click()
+                                    except: pass
+                                    time.sleep(1)
+                                    try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
+                                    except: pass
+                                    time.sleep(3)
+                            except Exception as e:
+                                err_str = str(e).lower()
+                                if "crash" in err_str or "target closed" in err_str:
+                                    session.log(f"\U0001f4a5 Crashed during captcha, restarting...")
+                                    break
+                                else:
+                                    session.log(f"\u26a0\ufe0f Captcha error: {e}")
+                                time.sleep(2)
+
+                        if not captcha_solved:
+                            continue
+
+                    # \u2500\u2500 Click service button \u2500\u2500
+                    session.log(f"{emoji} Looking for {svc_name} button...")
                     try:
-                        btn_el = page.locator(f".{btn_cls}")
-                        if btn_el.count() > 0 and btn_el.get_attribute("disabled"):
-                            session.log(f"❌ {svc_name} is currently unavailable on Zefoy. Try a different service.")
-                        else:
-                            session.log(f"❌ {svc_name} button not found. Stopping.")
+                        page.locator(f".{btn_cls}").wait_for(timeout=30000)
                     except:
-                        session.log(f"❌ {svc_name} button not found. Stopping.")
-                    return  # just this tab stops
+                        try:
+                            btn_el = page.locator(f".{btn_cls}")
+                            if btn_el.count() > 0 and btn_el.get_attribute("disabled"):
+                                session.log(f"\u274c {svc_name} is currently unavailable on Zefoy. Try a different service.")
+                            else:
+                                session.log(f"\u274c {svc_name} button not found. Restarting...")
+                        except:
+                            session.log(f"\u274c {svc_name} button not found. Restarting...")
+                        continue
 
-                page.locator(f".{btn_cls}").click()
-                time.sleep(2)
-                session.log(f"✅ {svc_name} panel opened!")
+                    page.locator(f".{btn_cls}").click()
+                    time.sleep(2)
+                    session.log(f"\u2705 {svc_name} panel opened!")
 
-                # ── Main loop ──
-                zero_streak = 0  # consecutive cycles returning 0
-                no_response_streak = 0  # consecutive "no response" cycles
-                MAX_NO_RESPONSE = 5  # reload page after this many
-                MAX_ZERO_STREAK = 10  # stop tab after this many 0-count results
-                while not session.stop_event.is_set():
-                    cycle = session.add_cycle()
-                    session.log(f"🔄 Cycle {cycle}")
+                    backoff = 5
 
-                    # Fill URL
-                    url_input = page.locator(f".{menu_cls} input[type='text'], .{menu_cls} input[placeholder]").first
-                    url_input.fill("")
-                    time.sleep(0.3)
-                    url_input.fill(session.video_url)
-                    time.sleep(1)
-
-                    # Click Search
-                    page.locator(f".{menu_cls} button[type='submit']").first.click()
-                    time.sleep(3)
-
-                    # ── Analyze page state in a loop ──
-                    for check_round in range(120):
-                        if session.stop_event.is_set():
+                    # \u2500\u2500 Main loop \u2500\u2500
+                    zero_streak = 0
+                    no_response_streak = 0
+                    MAX_NO_RESPONSE = 5
+                    MAX_ZERO_STREAK = 10
+                    while not session.stop_event.is_set():
+                        if not _safe_check(page):
+                            session.log("\U0001f4a5 Page crashed in main loop, restarting...")
                             break
 
-                        page_state = page.evaluate("""(menuClass) => {
-                            const body = document.body.innerText || '';
-                            const lower = body.toLowerCase();
+                        cycle = session.add_cycle()
+                        session.log(f"\U0001f504 Cycle {cycle}")
 
-                            // Rate limit countdown
-                            const countdown = document.getElementById('login-countdown');
-                            if (countdown && countdown.offsetParent !== null) {
-                                const text = countdown.innerText || '';
-                                if (text && (text.toLowerCase().includes('wait') ||
-                                    text.toLowerCase().includes('minute') ||
-                                    text.toLowerCase().includes('second'))) {
-                                    return {type: 'ratelimit', text: text};
-                                }
-                            }
-
-                            // Success
-                            if (lower.includes('successfully')) {
-                                // Try multiple patterns: "Successfully 100", "100 sent successfully", etc.
-                                const nums = body.match(/\\d+/g);
-                                let count = 0;
-                                if (nums) {
-                                    // Find the largest number near "successfully" (likely the count)
-                                    const lines = body.split('\\n');
-                                    for (const line of lines) {
-                                        if (line.toLowerCase().includes('successfully')) {
-                                            const lineNums = line.match(/\\d+/g);
-                                            if (lineNums) {
-                                                count = Math.max(...lineNums.map(Number));
-                                            }
-                                            break;
-                                        }
-                                    }
-                                    // Fallback: largest number on page
-                                    if (count === 0) {
-                                        count = Math.max(...nums.map(Number).filter(n => n < 100000));
-                                    }
-                                }
-                                return {type: 'success', count: count || 0};
-                            }
-
-                            // Spinner
-                            const spinners = document.querySelectorAll('.fa-spinner, .fa-spin, .spinner, [class*="loading"], [class*="spin"]');
-                            for (const s of spinners) {
-                                if (s.offsetParent !== null) return {type: 'loading'};
-                            }
-
-                            // Action bar (video/profile result)
-                            const menu = document.querySelector('.' + menuClass);
-                            if (menu) {
-                                const forms = menu.querySelectorAll('form');
-                                for (const form of forms) {
-                                    const action = form.getAttribute('action');
-                                    if (action) {
-                                        const container = document.getElementById(action);
-                                        if (container && container.offsetParent !== null) {
-                                            const btn = container.querySelector('a, button, [onclick]');
-                                            if (btn && btn.offsetParent !== null) {
-                                                const r = btn.getBoundingClientRect();
-                                                if (r.width > 0 && r.height > 0) {
-                                                    const sel = container.querySelector('select');
-                                                    const selOpts = sel ? Array.from(sel.options).filter(o => o.value).map(o => o.value) : [];
-                                                    return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2, hasSelect: !!sel, selectOptions: selOpts};
-                                                }
-                                            }
-                                            const divs = container.querySelectorAll('div, span');
-                                            for (const d of divs) {
-                                                const t = d.innerText?.trim();
-                                                if (t && /\\d/.test(t) && t.length < 60 &&
-                                                    !t.includes('wait') && !t.includes('minute') &&
-                                                    !t.includes('second') && !t.includes('Please')) {
-                                                    const r = d.getBoundingClientRect();
-                                                    if (r.width > 50 && r.height > 10)
-                                                        return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2};
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Fallback rate limit text
-                            if (lower.includes('please wait') && (lower.includes('minute') || lower.includes('second'))) {
-                                return {type: 'ratelimit', text: body.substring(0, 500)};
-                            }
-
-                            return {type: 'waiting'};
-                        }""", menu_cls)
-
-                        state_type = page_state.get('type', 'waiting') if page_state else 'waiting'
-
-                        if state_type == 'ratelimit':
-                            no_response_streak = 0  # page is alive
-                            timer_text = page_state.get('text', '')
-                            wait_secs = parse_wait_time(timer_text)
-                            if wait_secs <= 0:
-                                wait_secs = 60
-                            wait_secs += 5  # buffer
-                            session.log(f"⏳ Rate limited ({wait_secs}s)")
-
-                            # Live countdown — updates in-place via session.countdown
-                            for remaining in range(wait_secs, 0, -1):
-                                if session.stop_event.is_set():
-                                    break
-                                mins = remaining // 60
-                                secs = remaining % 60
-                                time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
-                                session.set_countdown(f"⏳ {time_str} remaining")
-                                time.sleep(1)
-
-                            session.set_countdown("")
-                            session.log("✅ Rate limit done, retrying...")
-
-                            # Re-fill URL and search
-                            time.sleep(1)
+                        try:
+                            url_input = page.locator(f".{menu_cls} input[type='text'], .{menu_cls} input[placeholder]").first
                             url_input.fill("")
                             time.sleep(0.3)
                             url_input.fill(session.video_url)
                             time.sleep(1)
+
                             page.locator(f".{menu_cls} button[type='submit']").first.click()
+                            time.sleep(3)
+                        except Exception as fill_err:
+                            err_str = str(fill_err).lower()
+                            if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
+                                session.log("\U0001f4a5 Crashed filling URL, restarting...")
+                                break
+                            session.log(f"\u26a0\ufe0f Error filling URL: {fill_err}")
                             time.sleep(3)
                             continue
 
-                        elif state_type == 'success':
-                            count = page_state.get('count', 0)
-                            new_total = session.add_count(count)
-                            if count > 0:
-                                zero_streak = 0
-                                no_response_streak = 0
-                                session.log(f"🎉 +{count} {unit}! Total: {new_total:,}")
-                            else:
-                                zero_streak += 1
-                                no_response_streak = 0
-                                if zero_streak >= MAX_ZERO_STREAK:
-                                    session.log(f"🔴 {zero_streak} consecutive 0 {unit} — Zefoy may be blocking. Stopping tab.")
-                                    return
-                                session.log(f"⚠️ Zefoy returned 0 {unit} (streak: {zero_streak}/{MAX_ZERO_STREAK}) — retrying...")
-                            break
-
-                        elif state_type == 'bar':
-                            # If there's a "Select Limit" dropdown, pick the highest value
-                            if page_state.get('hasSelect') and page_state.get('selectOptions'):
-                                try:
-                                    best = page_state['selectOptions'][-1]  # highest
-                                    page.locator("select#selectlimit, select[name='select_lmt'], select.form-select").first.select_option(best)
-                                    session.log(f"📊 Selected limit: {best}")
-                                    time.sleep(0.5)
-                                except Exception as sel_err:
-                                    session.log(f"⚠️ Could not set limit dropdown: {sel_err}")
-
-                            x, y = page_state['x'], page_state['y']
-                            session.log(f"{emoji} Sending {unit}...")
-                            page.mouse.click(x, y)
-                            time.sleep(2)
-
-                            # Wait for success
-                            count = 0
-                            for _ in range(30):
-                                try:
-                                    body = page.inner_text("body")
-                                    if "successfully" in body.lower():
-                                        # Find count: try multiple patterns
-                                        for line in body.split('\n'):
-                                            if 'successfully' in line.lower():
-                                                line_nums = re.findall(r'\d+', line)
-                                                if line_nums:
-                                                    count = max(int(n) for n in line_nums)
-                                                break
-                                        # Fallback: any number near "successfully"
-                                        if count == 0:
-                                            all_nums = re.findall(r'\d+', body)
-                                            if all_nums:
-                                                count = max(int(n) for n in all_nums if int(n) < 100000)
-                                        new_total = session.add_count(count)
-                                        break
-                                except:
-                                    pass
-                                time.sleep(1)
-
-                            if count > 0:
-                                zero_streak = 0
-                                no_response_streak = 0
-                                session.log(f"🎉 +{count} {unit}! Total: {new_total:,}")
-                            else:
-                                zero_streak += 1
-                                no_response_streak = 0
-                                if zero_streak >= MAX_ZERO_STREAK:
-                                    session.log(f"🔴 {zero_streak} consecutive 0 {unit} — Zefoy may be blocking. Stopping tab.")
-                                    return
-                                session.log(f"⚠️ Zefoy returned 0 {unit} (streak: {zero_streak}/{MAX_ZERO_STREAK}) — retrying...")
-                            break
-
-                        elif state_type == 'loading':
-                            time.sleep(1)
-                            continue
-
-                        else:  # waiting
-                            if check_round < 30:
-                                time.sleep(1)
-                                continue
-                            else:
-                                no_response_streak += 1
-                                if no_response_streak >= MAX_NO_RESPONSE:
-                                    session.log(f"🔴 {no_response_streak} consecutive no-responses — reloading page...")
-                                    no_response_streak = 0
-                                    try:
-                                        page.reload(wait_until="domcontentloaded")
-                                        time.sleep(5)
-                                        # Re-check for service button
-                                        try:
-                                            page.locator(f".{btn_cls}").wait_for(timeout=10000)
-                                            page.locator(f".{btn_cls}").click()
-                                            time.sleep(2)
-                                            session.log(f"✅ {svc_name} panel re-opened after reload")
-                                        except:
-                                            session.log(f"❌ {svc_name} button not found after reload. Stopping tab.")
-                                            return
-                                    except Exception as reload_err:
-                                        session.log(f"❌ Page reload failed: {reload_err}. Stopping tab.")
-                                        return
-                                else:
-                                    session.log(f"⚠️ No response, retrying... ({no_response_streak}/{MAX_NO_RESPONSE})")
+                        crashed_in_check = False
+                        for check_round in range(120):
+                            if session.stop_event.is_set():
                                 break
 
-                    time.sleep(3)
+                            try:
+                                page_state = page.evaluate("""(menuClass) => {
+                                    const body = document.body.innerText || '';
+                                    const lower = body.toLowerCase();
 
-                if multi:
-                    session.log("🛑 Tab finished.")
+                                    const countdown = document.getElementById('login-countdown');
+                                    if (countdown && countdown.offsetParent !== null) {
+                                        const text = countdown.innerText || '';
+                                        if (text && (text.toLowerCase().includes('wait') ||
+                                            text.toLowerCase().includes('minute') ||
+                                            text.toLowerCase().includes('second'))) {
+                                            return {type: 'ratelimit', text: text};
+                                        }
+                                    }
 
+                                    if (lower.includes('successfully')) {
+                                        const nums = body.match(/\\d+/g);
+                                        let count = 0;
+                                        if (nums) {
+                                            const lines = body.split('\\n');
+                                            for (const line of lines) {
+                                                if (line.toLowerCase().includes('successfully')) {
+                                                    const lineNums = line.match(/\\d+/g);
+                                                    if (lineNums) {
+                                                        count = Math.max(...lineNums.map(Number));
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                            if (count === 0) {
+                                                count = Math.max(...nums.map(Number).filter(n => n < 100000));
+                                            }
+                                        }
+                                        return {type: 'success', count: count || 0};
+                                    }
+
+                                    const spinners = document.querySelectorAll('.fa-spinner, .fa-spin, .spinner, [class*="loading"], [class*="spin"]');
+                                    for (const s of spinners) {
+                                        if (s.offsetParent !== null) return {type: 'loading'};
+                                    }
+
+                                    const menu = document.querySelector('.' + menuClass);
+                                    if (menu) {
+                                        const forms = menu.querySelectorAll('form');
+                                        for (const form of forms) {
+                                            const action = form.getAttribute('action');
+                                            if (action) {
+                                                const container = document.getElementById(action);
+                                                if (container && container.offsetParent !== null) {
+                                                    const btn = container.querySelector('a, button, [onclick]');
+                                                    if (btn && btn.offsetParent !== null) {
+                                                        const r = btn.getBoundingClientRect();
+                                                        if (r.width > 0 && r.height > 0) {
+                                                            const sel = container.querySelector('select');
+                                                            const selOpts = sel ? Array.from(sel.options).filter(o => o.value).map(o => o.value) : [];
+                                                            return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2, hasSelect: !!sel, selectOptions: selOpts};
+                                                        }
+                                                    }
+                                                    const divs = container.querySelectorAll('div, span');
+                                                    for (const d of divs) {
+                                                        const t = d.innerText?.trim();
+                                                        if (t && /\\d/.test(t) && t.length < 60 &&
+                                                            !t.includes('wait') && !t.includes('minute') &&
+                                                            !t.includes('second') && !t.includes('Please')) {
+                                                            const r = d.getBoundingClientRect();
+                                                            if (r.width > 50 && r.height > 10)
+                                                                return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2};
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (lower.includes('please wait') && (lower.includes('minute') || lower.includes('second'))) {
+                                        return {type: 'ratelimit', text: body.substring(0, 500)};
+                                    }
+
+                                    return {type: 'waiting'};
+                                }""", menu_cls)
+                            except Exception as eval_err:
+                                err_str = str(eval_err).lower()
+                                if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
+                                    session.log("\U0001f4a5 Crashed during page check, restarting...")
+                                    crashed_in_check = True
+                                    break
+                                time.sleep(1)
+                                continue
+
+                            state_type = page_state.get('type', 'waiting') if page_state else 'waiting'
+
+                            if state_type == 'ratelimit':
+                                no_response_streak = 0
+                                timer_text = page_state.get('text', '')
+                                wait_secs = parse_wait_time(timer_text)
+                                if wait_secs <= 0:
+                                    wait_secs = 60
+                                wait_secs += 5
+                                session.log(f"\u23f3 Rate limited ({wait_secs}s)")
+
+                                for remaining in range(wait_secs, 0, -1):
+                                    if session.stop_event.is_set():
+                                        break
+                                    mins = remaining // 60
+                                    secs = remaining % 60
+                                    time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
+                                    session.set_countdown(f"\u23f3 {time_str} remaining")
+                                    time.sleep(1)
+
+                                session.set_countdown("")
+                                session.log("\u2705 Rate limit done, retrying...")
+
+                                try:
+                                    time.sleep(1)
+                                    url_input.fill("")
+                                    time.sleep(0.3)
+                                    url_input.fill(session.video_url)
+                                    time.sleep(1)
+                                    page.locator(f".{menu_cls} button[type='submit']").first.click()
+                                    time.sleep(3)
+                                except Exception as refill_err:
+                                    err_str = str(refill_err).lower()
+                                    if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
+                                        crashed_in_check = True
+                                        break
+                                continue
+
+                            elif state_type == 'success':
+                                count = page_state.get('count', 0)
+                                new_total = session.add_count(count)
+                                if count > 0:
+                                    zero_streak = 0
+                                    no_response_streak = 0
+                                    session.log(f"\U0001f389 +{count} {unit}! Total: {new_total:,}")
+                                else:
+                                    zero_streak += 1
+                                    no_response_streak = 0
+                                    if zero_streak >= MAX_ZERO_STREAK:
+                                        session.log(f"\u26a0\ufe0f {zero_streak} consecutive 0 {unit} \u2014 resetting (not stopping)...")
+                                        zero_streak = 0
+                                    else:
+                                        session.log(f"\u26a0\ufe0f Zefoy returned 0 {unit} (streak: {zero_streak}/{MAX_ZERO_STREAK}) \u2014 retrying...")
+                                break
+
+                            elif state_type == 'bar':
+                                if page_state.get('hasSelect') and page_state.get('selectOptions'):
+                                    try:
+                                        best = page_state['selectOptions'][-1]
+                                        page.locator("select#selectlimit, select[name='select_lmt'], select.form-select").first.select_option(best)
+                                        session.log(f"\U0001f4ca Selected limit: {best}")
+                                        time.sleep(0.5)
+                                    except Exception as sel_err:
+                                        session.log(f"\u26a0\ufe0f Could not set limit dropdown: {sel_err}")
+
+                                x, y = page_state['x'], page_state['y']
+                                session.log(f"{emoji} Sending {unit}...")
+                                try:
+                                    page.mouse.click(x, y)
+                                except Exception as click_err:
+                                    err_str = str(click_err).lower()
+                                    if "crash" in err_str or "target closed" in err_str:
+                                        crashed_in_check = True
+                                        break
+                                time.sleep(2)
+
+                                count = 0
+                                for _ in range(30):
+                                    try:
+                                        body = page.inner_text("body")
+                                        if "successfully" in body.lower():
+                                            for line in body.split('\n'):
+                                                if 'successfully' in line.lower():
+                                                    line_nums = re.findall(r'\d+', line)
+                                                    if line_nums:
+                                                        count = max(int(n) for n in line_nums)
+                                                break
+                                            if count == 0:
+                                                all_nums = re.findall(r'\d+', body)
+                                                if all_nums:
+                                                    count = max(int(n) for n in all_nums if int(n) < 100000)
+                                            new_total = session.add_count(count)
+                                            break
+                                    except:
+                                        pass
+                                    time.sleep(1)
+
+                                if count > 0:
+                                    zero_streak = 0
+                                    no_response_streak = 0
+                                    session.log(f"\U0001f389 +{count} {unit}! Total: {new_total:,}")
+                                else:
+                                    zero_streak += 1
+                                    no_response_streak = 0
+                                    if zero_streak >= MAX_ZERO_STREAK:
+                                        session.log(f"\u26a0\ufe0f {zero_streak} consecutive 0 {unit} \u2014 resetting (not stopping)...")
+                                        zero_streak = 0
+                                    else:
+                                        session.log(f"\u26a0\ufe0f Zefoy returned 0 {unit} (streak: {zero_streak}/{MAX_ZERO_STREAK}) \u2014 retrying...")
+                                break
+
+                            elif state_type == 'loading':
+                                time.sleep(1)
+                                continue
+
+                            else:
+                                if check_round < 30:
+                                    time.sleep(1)
+                                    continue
+                                else:
+                                    no_response_streak += 1
+                                    if no_response_streak >= MAX_NO_RESPONSE:
+                                        session.log(f"\U0001f534 {no_response_streak} consecutive no-responses \u2014 reloading page...")
+                                        no_response_streak = 0
+                                        try:
+                                            page.reload(wait_until="domcontentloaded")
+                                            time.sleep(5)
+                                            try:
+                                                page.locator(f".{btn_cls}").wait_for(timeout=10000)
+                                                page.locator(f".{btn_cls}").click()
+                                                time.sleep(2)
+                                                session.log(f"\u2705 {svc_name} panel re-opened after reload")
+                                            except:
+                                                session.log(f"\u26a0\ufe0f {svc_name} button not found after reload, restarting...")
+                                                crashed_in_check = True
+                                                break
+                                        except Exception as reload_err:
+                                            err_str = str(reload_err).lower()
+                                            if "crash" in err_str or "target closed" in err_str:
+                                                crashed_in_check = True
+                                                break
+                                            session.log(f"\u26a0\ufe0f Reload error: {reload_err}")
+                                    else:
+                                        session.log(f"\u26a0\ufe0f No response, retrying... ({no_response_streak}/{MAX_NO_RESPONSE})")
+                                    break
+
+                        if crashed_in_check:
+                            session.log("\U0001f4a5 Crashed in main loop, restarting tab...")
+                            break
+
+                        time.sleep(3)
+                        if cycle % 10 == 0:
+                            gc.collect()
+
+            except Exception as inner_err:
+                err_str = str(inner_err).lower()
+                if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
+                    session.log(f"\U0001f4a5 Browser crashed, restarting tab...")
+                else:
+                    session.log(f"\u26a0\ufe0f Error: {inner_err} \u2014 restarting tab...")
+                import traceback
+                traceback.print_exc()
             finally:
-                browser.close()
-                with session.count_lock:
-                    session.active_tabs -= 1
-                    remaining = session.active_tabs
-                if remaining <= 0 and session.status == "running":
-                    session.log("🛑 All tabs finished.")
-                    session.status = "stopped"
+                try:
+                    if browser:
+                        browser.close()
+                except:
+                    pass
+                gc.collect()
+
+        session.log("\U0001f6d1 Tab exhausted all restart attempts.")
 
     except Exception as e:
-        session.log(f"❌ Fatal error: {e}")
+        session.log(f"\u274c Fatal error: {e}")
         import traceback
         traceback.print_exc()
+    finally:
         with session.count_lock:
             session.active_tabs = max(0, session.active_tabs - 1)
-            if session.active_tabs <= 0:
+            if session.active_tabs <= 0 and session.status == "running":
                 session.status = "error"
 
 
