@@ -1113,18 +1113,15 @@ def run_qqtube_tab(session, tab_id):
                         # still be usable for script injection
                         pass
                     
-                    # Inject the FingerprintJS SDK via script tag (works even if
-                    # the page didn't fully load, avoids dynamic import() issues)
+                    # Set a generous default timeout for all page operations
+                    fp_page.set_default_timeout(60000)
+                    
+                    # Run the real FingerprintJS SDK to get a genuine visitorId
                     try:
                         ffpr = fp_page.evaluate("""() => {
                             return new Promise((resolve) => {
-                                const timeout = setTimeout(() => resolve(''), 30000);
-                                const script = document.createElement('script');
-                                script.src = 'https://static1.qqtube.com/web/v3/L7VMDtfAtpoCHApk30SD';
-                                script.type = 'module';
-                                document.head.appendChild(script);
+                                const timeout = setTimeout(() => resolve(''), 45000);
                                 
-                                // Use dynamic import for ES module
                                 import('https://static1.qqtube.com/web/v3/L7VMDtfAtpoCHApk30SD')
                                     .then(mod => mod.load({
                                         endpoint: [
@@ -1142,7 +1139,7 @@ def run_qqtube_tab(session, tab_id):
                                         resolve('');
                                     });
                             });
-                        }""", timeout=45000)
+                        }""")
                     except Exception as fp_err:
                         session.log(f"\u26a0\ufe0f FingerprintJS error: {str(fp_err)[:80]}")
                     
