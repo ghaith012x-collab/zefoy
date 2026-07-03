@@ -61,9 +61,6 @@ def run_bot(tiktok_url, q):
             page.goto(ZEFOY, wait_until="networkidle", timeout=30000)
             time.sleep(3)
 
-            insight = get_page_insight(page)
-            emit(q, 1, f"Page loaded: {insight['title']}", inspect=insight)
-
             # Captcha check
             emit(q, 2, "Checking for captcha...")
             captcha_present = False
@@ -108,79 +105,57 @@ def run_bot(tiktok_url, q):
                         continue
                 time.sleep(4)
 
-            insight = get_page_insight(page)
-            emit(q, 7, "Post-captcha page state", inspect=insight)
-
             # Click Views arrow button
-            emit(q, 8, "Looking for Views arrow button...")
+            emit(q, 7, "Looking for Views arrow button...")
             views_clicked = False
 
-            try:
-                all_elements = page.locator("h1, h2, h3, h4, h5, h6, p, div, button, a, span").all()
-                views_idx = -1
-                for i, el in enumerate(all_elements):
-                    try:
-                        if el.inner_text(timeout=500).strip() == "Views":
-                            views_idx = i
-                            emit(q, 8, f"Found 'Views' at element index {i}")
+            # Strategy: Find all buttons, look for the one with arrow icon (empty text or just arrow symbol)
+            all_btns = page.locator("button, a").all()
+            emit(q, 7, f"Found {len(all_btns)} clickable elements")
+            
+            for btn in all_btns:
+                try:
+                    txt = btn.inner_text(timeout=500).strip()
+                    html = btn.evaluate("el => el.outerHTML")[:200]
+                    # The arrow button has no text, just an icon inside
+                    if not txt or txt in ["→", ">", ""]:
+                        # Check if it contains an icon (i, svg, img)
+                        has_icon = btn.locator("i, svg, img").count() > 0
+                        if has_icon or not txt:
+                            btn.click()
+                            views_clicked = True
+                            emit(q, 8, "Clicked arrow button")
                             break
-                    except:
-                        continue
+                except:
+                    continue
 
-                if views_idx >= 0:
-                    for j in range(views_idx + 1, min(views_idx + 5, len(all_elements))):
-                        el = all_elements[j]
-                        try:
-                            tag = el.evaluate("e => e.tagName.toLowerCase()")
-                            txt = el.inner_text(timeout=500).strip()
-                            emit(q, 8, f"Checking element {j}: <{tag}> '{txt[:20]}'")
-                            if tag in ["button", "a"]:
-                                el.click()
-                                views_clicked = True
-                                emit(q, 9, f"Clicked arrow button after Views")
-                                break
-                        except:
-                            continue
-            except Exception as e:
-                emit(q, 8, f"Views search error: {str(e)[:80]}")
+            # Fallback: click by index — the Views arrow is typically around index 4-6
+            if not views_clicked:
+                try:
+                    # Get parent containers of "Views" text
+                    views_text = page.locator("text=Views").first
+                    parent = views_text.locator("xpath=..")
+                    arrow = parent.locator("button, a").first
+                    if arrow.is_visible(timeout=3000):
+                        arrow.click()
+                        views_clicked = True
+                        emit(q, 8, "Clicked arrow button via parent")
+                except:
+                    pass
 
             if not views_clicked:
-                for sel in ["button:has(> svg)", "button:has(> i)", "a:has(> svg)", "a:has(> i)", "[class*='arrow']", "[class*='views'] button", "[class*='views'] a", "button", "a"]:
-                    try:
-                        elements = page.locator(sel).all()
-                        for el in elements:
-                            try:
-                                txt = el.inner_text(timeout=500).strip()
-                                if not txt or "→" in txt or ">" in txt:
-                                    if el.is_visible(timeout=2000):
-                                        el.click()
-                                        views_clicked = True
-                                        emit(q, 9, f"Clicked arrow button")
-                                        break
-                            except:
-                                continue
-                        if views_clicked:
-                            break
-                    except:
-                        continue
-
-            if not views_clicked:
-                insight = get_page_insight(page)
-                emit(q, 99, "Could not find Views button", inspect=insight, done=True)
+                emit(q, 99, "Could not find Views button", done=True)
                 browser.close()
                 return
 
             time.sleep(3)
-            insight = get_page_insight(page)
-            emit(q, 10, "Views page loaded", inspect=insight)
 
             # Fill TikTok URL
-            emit(q, 11, "Looking for video URL input...")
+            emit(q, 9, "Looking for video URL input...")
             url_input_selectors = [
                 "input[placeholder*='Enter Video URL']",
                 "input[placeholder*='Video URL']",
                 "input[placeholder*='URL']",
-                "input[placeholder*='video']",
                 "input[type='text']",
                 "input"
             ]
@@ -191,21 +166,22 @@ def run_bot(tiktok_url, q):
                     if inp.is_visible(timeout=5000):
                         inp.fill(tiktok_url)
                         url_filled = True
-                        emit(q, 12, f"Link pasted: {tiktok_url[:40]}...")
+                        emit(q, 10, f"Link pasted: {tiktok_url[:40]}...")
                         break
                 except:
                     continue
 
             if not url_filled:
-                insight = get_page_insight(page)
-                emit(q, 99, "Could not find URL input", inspect=insight, done=True)
+                emit(q, 99, "Could not find URL input", done=True)
                 browser.close()
                 return
 
-            # Click Search + handle "Too many requests" loop
-            max_retries = 10
-            for attempt in range(1, max_retries + 1):
-                emit(q, 13, f"Clicking Search (attempt {attempt})...")
+            # MAIN LOOP: Search → Click Camera Bar → Handle "Too many requests" → Retry
+            max_cycles = 15
+            for cycle in range(1, max_cycles + 1):
+                emit(q, 11, f"Cycle {cycle}: Clicking Search...")
+                
+                # Click Search
                 search_clicked = False
                 for sel in ["button:has-text('Search')", "input[type='submit']", "button"]:
                     try:
@@ -213,7 +189,7 @@ def run_bot(tiktok_url, q):
                         if btn.is_visible(timeout=3000):
                             btn.click()
                             search_clicked = True
-                            emit(q, 14, "Search clicked")
+                            emit(q, 12, "Search clicked")
                             break
                     except:
                         continue
@@ -225,99 +201,176 @@ def run_bot(tiktok_url, q):
 
                 time.sleep(6)
 
-                # Check for "Too many requests"
+                # Check for "Too many requests" immediately
                 too_many = False
                 try:
                     tm = page.locator("text=Too many requests")
                     if tm.is_visible(timeout=3000):
                         too_many = True
-                        emit(q, 15, "Got 'Too many requests' — retrying...")
-                        time.sleep(3)
-                        continue
+                        emit(q, 13, "Got 'Too many requests' — will retry after clicking camera bar")
                 except:
                     pass
 
-                if not too_many:
-                    break
-
-                if attempt == max_retries:
-                    emit(q, 99, "Max retries reached. Zefoy is rate limiting.", done=True)
-                    browser.close()
-                    return
-
-            # Click the dark bar with red camera / view count
-            emit(q, 16, "Looking for view count bar (red camera icon)...")
-            camera_clicked = False
-            camera_selectors = [
-                "button:has-text('354')",
-                "button:has-text('16,800')",
-                "button:has-text('1,000')",
-                "div:has-text('354')",
-                "div:has-text('16,800')",
-                "[class*='camera']",
-                "[class*='video']",
-                "button[class*='dark']",
-                "div[class*='dark']",
-                "button",
-                "div"
-            ]
-            for sel in camera_selectors:
-                try:
-                    elements = page.locator(sel).all()
-                    for el in elements:
-                        try:
-                            txt = el.inner_text(timeout=500).strip()
-                            # Look for numbers (view counts) or camera icon
-                            has_number = any(c.isdigit() for c in txt)
-                            has_camera = "camera" in txt.lower() or "video" in txt.lower()
-                            if (has_number or has_camera) and el.is_visible(timeout=2000):
-                                el.click()
-                                camera_clicked = True
-                                emit(q, 17, f"Clicked view bar: '{txt[:30]}'")
-                                break
-                        except:
-                            continue
-                    if camera_clicked:
-                        break
-                except:
-                    continue
-
-            if not camera_clicked:
-                insight = get_page_insight(page)
-                emit(q, 99, "Could not find view count bar", inspect=insight, done=True)
-                browser.close()
-                return
-
-            time.sleep(3)
-
-            # Wait for success
-            emit(q, 18, "Waiting for confirmation...")
-            success_found = False
-            try:
-                page.wait_for_selector("text=Successfully", timeout=30000)
-                msg = page.locator("text=Successfully").first.inner_text(timeout=5000)
-                emit(q, 19, msg, done=True)
-                success_found = True
-            except:
-                pass
-
-            if not success_found:
-                for txt in ["sent", "complete", "done", "views", "1000"]:
+                # Click the dark camera/view count bar
+                emit(q, 14, "Looking for view count bar (red camera icon)...")
+                camera_clicked = False
+                
+                # The camera bar appears as a dark element with a number and red camera icon
+                # It's typically a button or div with dark background
+                camera_selectors = [
+                    "button[class*='dark']",
+                    "div[class*='dark']",
+                    "[style*='background-color: rgb(54']",  # Dark gray background
+                    "[style*='background:#3']",
+                    "button:has(> i[class*='video'])",
+                    "button:has(> i[class*='camera'])",
+                    "div:has(> i[class*='video'])",
+                    "div:has(> i[class*='camera'])",
+                ]
+                
+                for sel in camera_selectors:
                     try:
-                        el = page.locator(f"text={txt}").first
-                        if el.is_visible(timeout=2000):
-                            emit(q, 19, "Views sent successfully", done=True)
-                            success_found = True
+                        elements = page.locator(sel).all()
+                        for el in elements:
+                            try:
+                                txt = el.inner_text(timeout=500).strip()
+                                # Must contain digits (view count) and NOT contain "Important" or "Notice"
+                                has_digits = any(c.isdigit() for c in txt)
+                                is_notice = "important" in txt.lower() or "notice" in txt.lower() or "zefoy" in txt.lower()
+                                if has_digits and not is_notice and el.is_visible(timeout=2000):
+                                    el.click()
+                                    camera_clicked = True
+                                    emit(q, 15, f"Clicked view bar: '{txt[:20]}'")
+                                    break
+                            except:
+                                continue
+                        if camera_clicked:
                             break
                     except:
                         continue
 
-            if not success_found:
-                emit(q, 99, "Unknown result", done=True)
+                # Fallback: find by text containing digits only (like "354", "16,800")
+                if not camera_clicked:
+                    try:
+                        all_elements = page.locator("button, div").all()
+                        for el in all_elements:
+                            try:
+                                txt = el.inner_text(timeout=500).strip()
+                                # Pure number or number with comma, no letters
+                                clean = txt.replace(",", "").replace(" ", "")
+                                if clean.isdigit() and el.is_visible(timeout=2000):
+                                    # Verify it's dark/black background
+                                    bg = el.evaluate("e => getComputedStyle(e).backgroundColor")
+                                    if "rgb(0" in bg or "rgb(3" in bg or "rgb(4" in bg or "rgb(5" in bg:
+                                        el.click()
+                                        camera_clicked = True
+                                        emit(q, 15, f"Clicked view bar by number: '{txt}'")
+                                        break
+                            except:
+                                continue
+                    except:
+                        pass
+
+                if not camera_clicked:
+                    emit(q, 16, "No camera bar found this cycle — checking if already complete...")
+                    # Maybe it already succeeded?
+                    try:
+                        success = page.locator("text=Successfully").first
+                        if success.is_visible(timeout=2000):
+                            msg = success.inner_text(timeout=3000)
+                            emit(q, 17, msg, done=True)
+                            browser.close()
+                            return
+                    except:
+                        pass
+
+                    # If "Too many requests" was shown and no bar, just retry search
+                    if too_many:
+                        emit(q, 13, "Rate limited, retrying search...")
+                        time.sleep(5)
+                        continue
+                    else:
+                        emit(q, 99, "Could not find camera bar", done=True)
+                        browser.close()
+                        return
+
+                # Wait for spinner / result after clicking camera bar
+                emit(q, 16, "Waiting for result after camera bar click...")
+                time.sleep(3)
+
+                # Check various result states
+                result_found = False
+                
+                # State 1: Success message
+                try:
+                    success = page.locator("text=Successfully").first
+                    if success.is_visible(timeout=10000):
+                        msg = success.inner_text(timeout=5000)
+                        emit(q, 17, msg, done=True)
+                        result_found = True
+                        browser.close()
+                        return
+                except:
+                    pass
+
+                # State 2: "Checking Timer..." / "Next Submit: READY"
+                try:
+                    timer = page.locator("text=Checking Timer").first
+                    if timer.is_visible(timeout=5000):
+                        emit(q, 17, "Timer check in progress...")
+                        # Wait for it to complete
+                        time.sleep(15)
+                        # Check again
+                        try:
+                            ready = page.locator("text=READY").first
+                            if ready.is_visible(timeout=5000):
+                                emit(q, 18, "Timer ready — can submit again")
+                                # The camera bar should reappear, loop continues
+                                result_found = True
+                                time.sleep(3)
+                                continue
+                        except:
+                            pass
+                except:
+                    pass
+
+                # State 3: "Too many requests" after clicking bar
+                try:
+                    tm = page.locator("text=Too many requests").first
+                    if tm.is_visible(timeout=3000):
+                        emit(q, 13, "Rate limited after bar click — retrying...")
+                        time.sleep(5)
+                        result_found = True
+                        continue
+                except:
+                    pass
+
+                # State 4: Spinner still going, wait more
+                try:
+                    spinner = page.locator(".spinner, [class*='spinner'], [class*='loading']").first
+                    if spinner.is_visible(timeout=2000):
+                        emit(q, 16, "Still loading, waiting more...")
+                        time.sleep(10)
+                        # Re-check success
+                        try:
+                            success = page.locator("text=Successfully").first
+                            if success.is_visible(timeout=5000):
+                                msg = success.inner_text(timeout=3000)
+                                emit(q, 17, msg, done=True)
+                                browser.close()
+                                return
+                        except:
+                            pass
+                except:
+                    pass
+
+                if not result_found:
+                    emit(q, 16, "No clear result yet, continuing to next cycle...")
+
+            emit(q, 99, "Max cycles reached", done=True)
 
         except Exception as e:
-            insight = get_page_insight(page) if 'page' in locals() else {"error": "page not created"}
-            emit(q, 99, f"Error: {str(e)}", inspect=insight, done=True)
+            emit(q, 99, f"Error: {str(e)}", done=True)
         finally:
             browser.close()
 
@@ -341,7 +394,7 @@ def stream():
     def generate():
         while True:
             try:
-                msg = q.get(timeout=180)
+                msg = q.get(timeout=300)
                 yield f"data: {msg}\n\n"
                 data = json.loads(msg.strip())
                 if data.get("done"):
