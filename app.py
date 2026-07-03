@@ -1,6 +1,9 @@
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from playwright.sync_api import sync_playwright
 import queue, threading, time, re, sys
+from PIL import Image, ImageFilter, ImageOps
+import pytesseract
+from io import BytesIO
 
 app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
@@ -46,41 +49,111 @@ def run_bot(tiktok_url, q):
             time.sleep(5)
             log(f"Page loaded: title='{page.title()}' url={page.url}")
 
-            # ── 3. HANDLE CAPTCHA (if present) ──
+            # ── 3. HANDLE CAPTCHA (with retries) ──
             emit(q, 2, "Checking for captcha...")
             log("Checking for captcha...")
-            try:
-                captcha_img = page.locator("img[src*='_CAPTCHA']")
-                if captcha_img.count() > 0:
-                    emit(q, 2, "Solving captcha...")
-                    log("Captcha image found, attempting OCR...")
 
-                    # Screenshot the captcha element directly (avoids CORS issues)
+            def solve_captcha(img_bytes):
+                """Try multiple OCR strategies on the captcha image."""
+                img = Image.open(BytesIO(img_bytes))
+
+                # Strategy 1: Grayscale + high contrast + threshold
+                gray = ImageOps.grayscale(img)
+                # Upscale 3x for better OCR
+                big = gray.resize((gray.width * 3, gray.height * 3), Image.LANCZOS)
+                # Sharpen
+                sharp = big.filter(ImageFilter.SHARPEN)
+                # Threshold: make it pure black text on white
+                thresh = sharp.point(lambda px: 255 if px > 140 else 0)
+
+                results = []
+                # Try different PSM modes
+                for psm in [7, 8, 13, 6]:
+                    config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+                    try:
+                        text = pytesseract.image_to_string(thresh, config=config).strip()
+                        text = re.sub(r'[^A-Za-z0-9]', '', text).lower()
+                        if len(text) >= 2:
+                            results.append(text)
+                    except:
+                        pass
+
+                # Strategy 2: Invert and retry
+                inverted = ImageOps.invert(thresh)
+                for psm in [7, 8]:
+                    config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+                    try:
+                        text = pytesseract.image_to_string(inverted, config=config).strip()
+                        text = re.sub(r'[^A-Za-z0-9]', '', text).lower()
+                        if len(text) >= 2:
+                            results.append(text)
+                    except:
+                        pass
+
+                # Strategy 3: Raw image
+                try:
+                    text = pytesseract.image_to_string(img, config='--psm 7').strip()
+                    text = re.sub(r'[^A-Za-z0-9]', '', text).lower()
+                    if len(text) >= 2:
+                        results.append(text)
+                except:
+                    pass
+
+                log(f"OCR candidates: {results}")
+                # Pick the most common result, or the first one
+                if not results:
+                    return ""
+                from collections import Counter
+                most_common = Counter(results).most_common(1)[0][0]
+                return most_common
+
+            for captcha_attempt in range(5):
+                try:
+                    captcha_img = page.locator("img[src*='_CAPTCHA']")
+                    if captcha_img.count() == 0:
+                        log("No captcha found, proceeding...")
+                        break
+
+                    emit(q, 2, f"Solving captcha (attempt {captcha_attempt + 1})...")
+                    log(f"Captcha attempt {captcha_attempt + 1}...")
+                    time.sleep(1)
+
+                    # Screenshot the captcha image
                     captcha_bytes = captcha_img.first.screenshot()
+                    captcha_text = solve_captcha(captcha_bytes)
+                    log(f"Captcha OCR result: '{captcha_text}'")
 
-                    from PIL import Image
-                    import pytesseract
-                    from io import BytesIO
+                    if not captcha_text:
+                        log("OCR returned empty, refreshing captcha...")
+                        # Click the refresh button to get a new captcha
+                        try:
+                            page.locator(".wrapper-capth button, .wrapper-capth .fa-refresh, .wrapper-capth .fa-sync, [onclick*='captcha']").first.click()
+                        except:
+                            page.reload(wait_until="domcontentloaded")
+                        time.sleep(3)
+                        continue
 
-                    img = Image.open(BytesIO(captcha_bytes))
-                    captcha_text = pytesseract.image_to_string(img).strip()
-                    # Clean: keep only alphanumeric
-                    captcha_text = re.sub(r'[^A-Za-z0-9]', '', captcha_text)
-                    log(f"Captcha OCR: '{captcha_text}'")
+                    # Fill and submit
+                    page.locator("#captchatoken").fill(captcha_text)
+                    time.sleep(0.5)
+                    page.locator(".submit-captcha").click()
+                    time.sleep(5)
 
-                    if captcha_text:
-                        page.locator("#captchatoken").fill(captcha_text)
-                        time.sleep(0.5)
-                        page.locator(".submit-captcha").click()
-                        time.sleep(5)
-                        log(f"Captcha submitted. Page now: '{page.title()}'")
-                    else:
-                        log("OCR returned empty text")
-                        emit(q, 2, "Captcha OCR failed — may need manual solve")
-                else:
-                    log("No captcha found, proceeding...")
-            except Exception as e:
-                log(f"Captcha step: {e}")
+                    # Check if captcha was accepted (Views button should appear)
+                    try:
+                        page.locator(".t-views-button").wait_for(timeout=5000)
+                        log("Captcha solved! Views button appeared.")
+                        emit(q, 2, "Captcha solved ✅")
+                        break
+                    except:
+                        log("Captcha was wrong, page still shows captcha. Retrying...")
+                        emit(q, 2, f"Wrong answer, retrying...")
+                        time.sleep(2)
+                        continue
+
+                except Exception as e:
+                    log(f"Captcha attempt error: {e}")
+                    time.sleep(2)
 
             # ── 4. FIND AND CLICK VIEWS BUTTON ──
             emit(q, 3, "Looking for Views button...")
