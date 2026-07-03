@@ -41,12 +41,19 @@ def run_bot(tiktok_url, q):
         )
 
         try:
-            # ── STEP 1: Load zefoy.com (original logic) ──
+            # ── STEP 1: Load zefoy.com ──
             emit(q, 1, "Loading zefoy.com...")
             log("Loading zefoy.com...")
-            page.goto(ZEFOY, wait_until="networkidle", timeout=60000)
-            time.sleep(3)
-            log(f"Page loaded: title='{page.title()}' url={page.url}")
+            page.goto(ZEFOY, wait_until="domcontentloaded", timeout=30000)
+            log("DOM loaded, waiting for page JS to render...")
+            # Wait for the actual Views element to appear (means JS has rendered)
+            try:
+                page.wait_for_selector("text=Views", timeout=20000)
+                log("Views element found — page fully loaded")
+            except PlaywrightTimeout:
+                log("Views not found after 20s, waiting 5s fallback...")
+                time.sleep(5)
+            log(f"Page ready: title='{page.title()}' url={page.url}")
             emit(q, 1, "Page loaded!")
 
             # ── STEP 2: Captcha check (original logic) ──
