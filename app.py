@@ -353,7 +353,7 @@ def run_session(session):
             t = threading.Thread(target=run_tab, args=(session, tab_id), daemon=True)
             t.start()
             threads.append(t)
-            time.sleep(3)  # stagger launches to avoid overwhelming
+            time.sleep(5)  # stagger launches to reduce memory spikes
         for t in threads:
             t.join()
 
@@ -382,7 +382,27 @@ def run_tab(session, tab_id):
 
             launch_opts = {
                 "headless": True,
-                "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+                "args": [
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--disable-background-networking",
+                    "--disable-default-apps",
+                    "--disable-sync",
+                    "--disable-translate",
+                    "--no-first-run",
+                    "--disable-background-timer-throttling",
+                    "--disable-renderer-backgrounding",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-component-extensions-with-background-pages",
+                    "--disable-features=TranslateUI",
+                    "--renderer-process-limit=1",
+                    "--js-flags=--max-old-space-size=128",
+                    "--disable-software-rasterizer",
+                    "--disable-logging",
+                    "--disable-hang-monitor",
+                ],
             }
             # Each tab gets its own Tor SOCKS port (9050-9059) → different IP
             if USING_TOR:
@@ -409,13 +429,50 @@ def run_tab(session, tab_id):
                 session.active_tabs += 1
 
             try:
-                page = browser.new_page()
+                page = browser.new_page(viewport={"width": 800, "height": 600})
                 page.on("dialog", lambda d: d.accept())
 
-                # ── Load zefoy ──
-                session.log("🌐 Loading zefoy.com...")
-                page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
-                time.sleep(5)
+                def _is_crashed(pg):
+                    """Check if the page has crashed."""
+                    try:
+                        pg.title()
+                        return False
+                    except Exception as e:
+                        return "crash" in str(e).lower() or "target closed" in str(e).lower()
+
+                # ── Load zefoy (with crash recovery) ──
+                MAX_BROWSER_RESTARTS = 3
+                for _restart in range(MAX_BROWSER_RESTARTS):
+                    if session.stop_event.is_set():
+                        return
+
+                    if _restart > 0:
+                        session.log(f"🔄 Restarting browser (attempt {_restart + 1}/{MAX_BROWSER_RESTARTS})...")
+                        try: browser.close()
+                        except: pass
+                        time.sleep(3)
+                        browser = p.chromium.launch(**launch_opts)
+                        page = browser.new_page(viewport={"width": 800, "height": 600})
+                        page.on("dialog", lambda d: d.accept())
+
+                    try:
+                        session.log("🌐 Loading zefoy.com...")
+                        page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
+                        time.sleep(5)
+
+                        if _is_crashed(page):
+                            session.log("💥 Page crashed on load!")
+                            continue
+
+                        break  # loaded successfully
+                    except Exception as load_err:
+                        if "crash" in str(load_err).lower() or "target closed" in str(load_err).lower():
+                            session.log(f"💥 Browser crashed on load: {load_err}")
+                            continue
+                        raise
+                else:
+                    session.log(f"❌ Browser crashed {MAX_BROWSER_RESTARTS} times. Stopping tab.")
+                    return
 
                 # ── Solve captcha ──
                 session.log("🔐 Checking for captcha...")
@@ -521,7 +578,23 @@ def run_tab(session, tab_id):
                                 except: pass
                                 time.sleep(3)
                         except Exception as e:
-                            session.log(f"⚠️ Captcha error: {e}")
+                            err_str = str(e).lower()
+                            if "crash" in err_str or "target closed" in err_str:
+                                session.log(f"💥 Page crashed during captcha! Restarting browser...")
+                                try: browser.close()
+                                except: pass
+                                time.sleep(3)
+                                browser = p.chromium.launch(**launch_opts)
+                                page = browser.new_page(viewport={"width": 800, "height": 600})
+                                page.on("dialog", lambda d: d.accept())
+                                try:
+                                    page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
+                                    time.sleep(5)
+                                except:
+                                    session.log("❌ Failed to reload after crash. Stopping tab.")
+                                    return
+                            else:
+                                session.log(f"⚠️ Captcha error: {e}")
                             time.sleep(2)
 
                 # ── Click service button ──
