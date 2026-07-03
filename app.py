@@ -257,29 +257,34 @@ def run_session(session):
             # ── Solve captcha ──
             session.log("🔐 Checking for captcha...")
 
-            # Directly detect captcha by looking for captcha elements
             captcha_detected = False
-            try:
-                page.locator("#captcha-img, .wrapper-capth, #captchatoken").first.wait_for(state="visible", timeout=10000)
-                captcha_detected = True
-            except:
-                pass
+            page_ready = False
 
-            if not captcha_detected:
-                # No captcha elements found — check if already past captcha
+            for page_attempt in range(5):
+                if session.stop_event.is_set():
+                    break
+
+                # Check for captcha elements
+                try:
+                    page.locator("#captcha-img, .wrapper-capth, #captchatoken").first.wait_for(state="visible", timeout=10000)
+                    captcha_detected = True
+                    break
+                except:
+                    pass
+
+                # No captcha — maybe already past it?
                 try:
                     page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=5000)
                     session.log("✅ No captcha needed — service buttons already visible")
+                    page_ready = True
+                    break
                 except:
-                    # Neither captcha nor service buttons — reload and retry
-                    session.log("⚠️ Page not ready, reloading...")
-                    page.reload(wait_until="domcontentloaded")
-                    time.sleep(5)
-                    try:
-                        page.locator("#captcha-img, .wrapper-capth, #captchatoken").first.wait_for(state="visible", timeout=10000)
-                        captcha_detected = True
-                    except:
-                        pass
+                    pass
+
+                # Neither found — reload and try again
+                session.log(f"⚠️ Page not ready, reloading (attempt {page_attempt + 1}/5)...")
+                page.reload(wait_until="domcontentloaded")
+                time.sleep(5 + page_attempt * 2)  # increasing wait
 
             if captcha_detected:
                 session.log("🔐 Captcha detected, solving...")
