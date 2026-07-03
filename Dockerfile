@@ -1,8 +1,8 @@
 FROM python:3.11-slim
 
-# Install system dependencies for Playwright and Tesseract
 RUN apt-get update && apt-get install -y \
     wget gnupg libgconf-2-4 libxss1 libnss3 libasound2 \
+    libatk-bridge2.0-0 libgtk-3-0 libdrm2 libxcomposite1 \
     tesseract-ocr libtesseract-dev \
     && rm -rf /var/lib/apt/lists/*
 
