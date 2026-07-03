@@ -26,9 +26,17 @@ def parse_timer_seconds(text):
     total = minutes * 60 + seconds
     return total if total > 0 else 60  # default 60s if can't parse
 
+def log(msg):
+    """Print to stdout for docker logs."""
+    import sys
+    print(f"[BOT] {msg}", flush=True)
+    sys.stdout.flush()
+
 def run_bot(tiktok_url, q):
+    log(f"run_bot called with url={tiktok_url}")
     with sync_playwright() as p:
         emit(q, 1, "Launching browser...")
+        log("Launching browser...")
         try:
             browser = p.chromium.launch(
                 headless=True,
@@ -38,10 +46,11 @@ def run_bot(tiktok_url, q):
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
                     "--disable-setuid-sandbox",
-                    "--single-process",
                 ]
             )
+            log("Browser launched OK")
         except Exception as e:
+            log(f"Browser launch FAILED: {e}")
             emit(q, 99, f"Browser failed to launch: {str(e)}", done=True)
             return
 
@@ -55,34 +64,43 @@ def run_bot(tiktok_url, q):
         try:
             # ── STEP 1: Load zefoy.com ──
             emit(q, 1, "Loading zefoy.com...")
+            log("Starting page.goto...")
             loaded = False
             for attempt in range(3):
                 try:
+                    log(f"goto attempt {attempt+1}...")
                     page.goto(ZEFOY, wait_until="commit", timeout=30000)
                     loaded = True
+                    log(f"goto attempt {attempt+1} SUCCESS")
                     emit(q, 1, f"Navigation committed (attempt {attempt+1}), waiting for page...")
                     break
                 except PlaywrightTimeout:
+                    log(f"goto attempt {attempt+1} TIMEOUT")
                     emit(q, 1, f"Attempt {attempt+1} timed out, retrying...")
                     time.sleep(2)
                 except Exception as e:
+                    log(f"goto attempt {attempt+1} ERROR: {e}")
                     emit(q, 1, f"Attempt {attempt+1} error: {str(e)[:80]}, retrying...")
                     time.sleep(2)
 
             if not loaded:
+                log("All 3 goto attempts failed")
                 emit(q, 99, "Failed to load zefoy.com after 3 attempts", done=True)
                 browser.close()
                 return
 
             # Give page time to render
+            log("Waiting 8s for page render...")
             time.sleep(8)
 
             # Log what we got for debugging
             try:
                 title = page.title()
                 url = page.url
+                log(f"Page title='{title}' url={url}")
                 emit(q, 1, f"Page ready: '{title}' @ {url}")
-            except:
+            except Exception as e:
+                log(f"Could not read page title: {e}")
                 emit(q, 1, "Page loaded (couldn't read title)")
 
             # ── STEP 2: Captcha check ──
