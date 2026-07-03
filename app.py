@@ -426,8 +426,11 @@ def run_session(session):
                                         const btn = container.querySelector('a, button, [onclick]');
                                         if (btn && btn.offsetParent !== null) {
                                             const r = btn.getBoundingClientRect();
-                                            if (r.width > 0 && r.height > 0)
-                                                return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2};
+                                            if (r.width > 0 && r.height > 0) {
+                                                const sel = container.querySelector('select');
+                                                const selOpts = sel ? Array.from(sel.options).filter(o => o.value).map(o => o.value) : [];
+                                                return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2, hasSelect: !!sel, selectOptions: selOpts};
+                                            }
                                         }
                                         const divs = container.querySelectorAll('div, span');
                                         for (const d of divs) {
@@ -498,6 +501,16 @@ def run_session(session):
                         break
 
                     elif state_type == 'bar':
+                        # If there's a "Select Limit" dropdown, pick the highest value
+                        if page_state.get('hasSelect') and page_state.get('selectOptions'):
+                            try:
+                                best = page_state['selectOptions'][-1]  # highest
+                                page.locator("select#selectlimit, select[name='select_lmt'], select.form-select").first.select_option(best)
+                                session.log(f"📊 Selected limit: {best}")
+                                time.sleep(0.5)
+                            except Exception as sel_err:
+                                session.log(f"⚠️ Could not set limit dropdown: {sel_err}")
+
                         x, y = page_state['x'], page_state['y']
                         session.log(f"{emoji} Sending {unit}...")
                         page.mouse.click(x, y)
