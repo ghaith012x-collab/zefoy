@@ -1100,37 +1100,55 @@ def run_qqtube_tab(session, tab_id):
                         fp_launch_opts["proxy"] = {"server": PROXY_URL}
                     
                     fp_browser = p.chromium.launch(**fp_launch_opts)
-                    fp_page = fp_browser.new_page()
-                    fp_page.goto(PAGE_URL, wait_until="domcontentloaded", timeout=30000)
-                    time.sleep(3)
+                    fp_ctx = fp_browser.new_context()
+                    fp_page = fp_ctx.new_page()
                     
-                    # Run the real FingerprintJS SDK to get a genuine visitorId
+                    # Load a minimal HTML page on QQTube's domain (faster than the full page)
+                    # We only need to be on the domain so the SDK endpoint calls work
+                    try:
+                        fp_page.goto("https://www.qqtube.com/robots.txt",
+                                     wait_until="commit", timeout=60000)
+                    except Exception:
+                        # Even if navigation partially fails, the page context may
+                        # still be usable for script injection
+                        pass
+                    
+                    # Inject the FingerprintJS SDK via script tag (works even if
+                    # the page didn't fully load, avoids dynamic import() issues)
                     try:
                         ffpr = fp_page.evaluate("""() => {
-                            return new Promise(async (resolve) => {
-                                try {
-                                    const mod = await import(
-                                        'https://static1.qqtube.com/web/v3/L7VMDtfAtpoCHApk30SD'
-                                    );
-                                    const fp = await mod.load({
+                            return new Promise((resolve) => {
+                                const timeout = setTimeout(() => resolve(''), 30000);
+                                const script = document.createElement('script');
+                                script.src = 'https://static1.qqtube.com/web/v3/L7VMDtfAtpoCHApk30SD';
+                                script.type = 'module';
+                                document.head.appendChild(script);
+                                
+                                // Use dynamic import for ES module
+                                import('https://static1.qqtube.com/web/v3/L7VMDtfAtpoCHApk30SD')
+                                    .then(mod => mod.load({
                                         endpoint: [
                                             'https://static1.qqtube.com',
                                             mod.defaultEndpoint
                                         ]
+                                    }))
+                                    .then(fp => fp.get())
+                                    .then(result => {
+                                        clearTimeout(timeout);
+                                        resolve(result.visitorId || '');
+                                    })
+                                    .catch(() => {
+                                        clearTimeout(timeout);
+                                        resolve('');
                                     });
-                                    const result = await fp.get();
-                                    resolve(result.visitorId || '');
-                                } catch(e) {
-                                    resolve('');
-                                }
                             });
-                        }""")
+                        }""", timeout=45000)
                     except Exception as fp_err:
                         session.log(f"\u26a0\ufe0f FingerprintJS error: {str(fp_err)[:80]}")
                     
                     # Grab cookies set by QQTube / FingerprintJS
                     try:
-                        for c in fp_page.context.cookies():
+                        for c in fp_ctx.cookies():
                             cookies_dict[c['name']] = c['value']
                     except:
                         pass
