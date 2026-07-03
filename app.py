@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, make_response
 from playwright.sync_api import sync_playwright
 import threading, time, re, sys, difflib, json, base64, os
 from PIL import Image, ImageOps
@@ -1281,7 +1281,11 @@ def run_qqtube_tab(session, tab_id):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    response = make_response(render_template("index.html"))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 
 @app.route("/tor-status")
