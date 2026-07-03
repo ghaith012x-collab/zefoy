@@ -6,3 +6,4 @@ pytesseract==0.3.10
 numpy
 requests
 PySocks
+SpeechRecognition

@@ -9,6 +9,8 @@ import requests
 import hashlib
 import uuid
 import random
+import subprocess
+import tempfile
 
 # Thread-local tab prefix for log messages
 _tab_prefix = threading.local()
@@ -66,7 +68,7 @@ CAPSOLVER_API_KEY = os.environ.get("CAPSOLVER_API_KEY", "").strip()
 TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY", "").strip()
 
 
-def solve_recaptcha_v2(site_key, page_url, session=None, timeout=180):
+def solve_recaptcha_v2(site_key, page_url, session=None, timeout=180, proxy=None):
     """Solve reCAPTCHA v2 and return the g-recaptcha-response token, or ''."""
     if CAPSOLVER_API_KEY:
         token = _solve_capsolver(site_key, page_url, session, timeout)
@@ -78,9 +80,11 @@ def solve_recaptcha_v2(site_key, page_url, session=None, timeout=180):
         if token:
             return token
 
-    if not CAPSOLVER_API_KEY and not TWOCAPTCHA_API_KEY:
-        if session:
-            session.log("\u26a0\ufe0f No solver key set (CAPSOLVER_API_KEY or TWOCAPTCHA_API_KEY)")
+    # Free solver: audio challenge + Google speech recognition (no API key)
+    token = _solve_recaptcha_free(site_key, page_url, proxy=proxy, session=session)
+    if token:
+        return token
+
     return ""
 
 
@@ -172,6 +176,298 @@ def _solve_2captcha(site_key, page_url, session, timeout):
         if session:
             session.log(f"\u26a0\ufe0f 2Captcha exception: {str(e)[:60]}")
         return None
+
+
+# ═══════════════════════════════════════════════════════════════
+#  FREE reCAPTCHA v2 SOLVER  (audio challenge + speech recognition)
+#  Same technique as the Buster browser extension — zero cost.
+#  Requires: ffmpeg (apt), SpeechRecognition (pip)
+# ═══════════════════════════════════════════════════════════════
+def _solve_recaptcha_free(site_key, page_url, proxy=None, session=None, max_attempts=3):
+    """
+    Free reCAPTCHA v2 solver — audio challenge + Google speech-to-text.
+    No API keys needed.
+
+    1. Renders a minimal page with reCAPTCHA on the target domain
+    2. Clicks checkbox (sometimes passes instantly)
+    3. If challenged → audio challenge → transcribe → submit
+
+    Returns g-recaptcha-response token or '' on failure.
+    """
+    global _active_browsers
+
+    try:
+        import speech_recognition as sr
+    except ImportError:
+        if session:
+            session.log("⚠️ SpeechRecognition not installed — add to requirements.txt")
+        return ""
+
+    for attempt in range(1, max_attempts + 1):
+        browser = None
+        got_slot = False
+        try:
+            if session:
+                session.log(f"🧩 Free reCAPTCHA solver (attempt {attempt}/{max_attempts})...")
+
+            # Acquire browser slot
+            if not _browser_semaphore.acquire(timeout=1):
+                if session:
+                    session.log("⏳ Waiting for browser slot...")
+                _browser_semaphore.acquire()
+            got_slot = True
+            with _active_browsers_lock:
+                _active_browsers += 1
+
+            with sync_playwright() as pw:
+                launch_opts = {
+                    "headless": True,
+                    "args": [
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--single-process",
+                        "--js-flags=--max-old-space-size=128",
+                    ],
+                }
+                if proxy:
+                    launch_opts["proxy"] = {"server": proxy}
+
+                browser = pw.chromium.launch(**launch_opts)
+                ctx = browser.new_context(
+                    user_agent=_random_ua(),
+                    viewport={"width": 1920, "height": 1080},
+                    locale="en-US",
+                )
+                page = ctx.new_page()
+                page.set_default_timeout(60000)
+
+                # Minimal HTML with only the reCAPTCHA widget.
+                # Route-intercepted on the QQTube domain so the site key
+                # passes Google's domain validation — loads instantly.
+                captcha_html = (
+                    '<!DOCTYPE html><html><head><title>Loading</title>'
+                    '<script src="https://www.google.com/recaptcha/api.js"'
+                    ' async defer></script></head><body>'
+                    f'<div class="g-recaptcha" data-sitekey="{site_key}"'
+                    ' data-callback="onSolved"></div>'
+                    '<script>function onSolved(t){document.title="SOLVED:"+t;}'
+                    '</script></body></html>'
+                )
+
+                def _intercept(route):
+                    if route.request.resource_type == "document":
+                        route.fulfill(
+                            status=200,
+                            content_type="text/html",
+                            body=captcha_html,
+                        )
+                    else:
+                        route.abort()
+
+                page.route("https://www.qqtube.com/**", _intercept)
+
+                try:
+                    page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
+                except Exception:
+                    pass  # partial load OK — reCAPTCHA loads from Google
+
+                # Wait for the reCAPTCHA anchor iframe
+                try:
+                    page.wait_for_selector(
+                        "iframe[src*='recaptcha/api2/anchor']", timeout=30000
+                    )
+                except Exception:
+                    if session:
+                        session.log("⚠️ reCAPTCHA widget didn't load")
+                    continue
+
+                time.sleep(2)
+
+                # ── Click the checkbox ──
+                anchor = page.frame_locator("iframe[src*='recaptcha/api2/anchor']")
+                try:
+                    anchor.locator("#recaptcha-anchor").click(timeout=10000)
+                except Exception:
+                    if session:
+                        session.log("⚠️ Couldn't click checkbox")
+                    continue
+
+                time.sleep(3)
+
+                # Lucky pass? (no challenge)
+                if page.title().startswith("SOLVED:"):
+                    token = page.title().split("SOLVED:", 1)[1]
+                    if session:
+                        session.log("✅ reCAPTCHA passed instantly!")
+                    return token
+
+                # ── Switch to audio challenge ──
+                try:
+                    page.wait_for_selector(
+                        "iframe[src*='recaptcha/api2/bframe']", timeout=10000
+                    )
+                except Exception:
+                    if session:
+                        session.log("⚠️ Challenge frame didn't appear")
+                    continue
+
+                bframe = page.frame_locator("iframe[src*='recaptcha/api2/bframe']")
+
+                try:
+                    bframe.locator("#recaptcha-audio-button").click(timeout=10000)
+                except Exception:
+                    if session:
+                        session.log("⚠️ No audio option available")
+                    continue
+
+                time.sleep(3)
+
+                # Check if Google blocked audio (common with Tor exit IPs)
+                try:
+                    err_el = bframe.locator(".rc-audiochallenge-error-message")
+                    err_text = err_el.text_content(timeout=3000) or ""
+                    if err_text and (
+                        "automated" in err_text.lower()
+                        or "try again" in err_text.lower()
+                    ):
+                        if session:
+                            session.log("⚠️ Audio blocked on this IP — will rotate")
+                        continue
+                except Exception:
+                    pass  # no error message = good
+
+                # ── Get audio URL ──
+                audio_url = None
+                for sel in (
+                    ".rc-audiochallenge-tdownload-link",
+                    "#audio-source",
+                ):
+                    try:
+                        val = bframe.locator(sel).get_attribute(
+                            "href" if "link" in sel else "src", timeout=5000
+                        )
+                        if val:
+                            audio_url = val
+                            break
+                    except Exception:
+                        continue
+
+                if not audio_url:
+                    if session:
+                        session.log("⚠️ No audio URL found")
+                    continue
+
+                # ── Download audio (through same proxy for IP match) ──
+                import tempfile
+                import subprocess as sp
+
+                dl = requests.Session()
+                if proxy:
+                    p_url = (
+                        proxy.replace("socks5://", "socks5h://")
+                        if proxy.startswith("socks5://")
+                        else proxy
+                    )
+                    dl.proxies = {"http": p_url, "https": p_url}
+                try:
+                    audio_bytes = dl.get(audio_url, timeout=30).content
+                finally:
+                    dl.close()
+
+                if len(audio_bytes) < 1000:
+                    if session:
+                        session.log("⚠️ Audio too small — likely error page")
+                    continue
+
+                # ── Convert MP3 → WAV → transcribe ──
+                mp3_path = tempfile.mktemp(suffix=".mp3")
+                wav_path = mp3_path.replace(".mp3", ".wav")
+                text = ""
+                try:
+                    with open(mp3_path, "wb") as f:
+                        f.write(audio_bytes)
+
+                    conv = sp.run(
+                        ["ffmpeg", "-y", "-loglevel", "error",
+                         "-i", mp3_path, "-ar", "16000", "-ac", "1", wav_path],
+                        capture_output=True, timeout=30,
+                    )
+                    if conv.returncode != 0:
+                        if session:
+                            session.log("⚠️ ffmpeg conversion failed")
+                        continue
+
+                    rec = sr.Recognizer()
+                    with sr.AudioFile(wav_path) as src:
+                        audio_data = rec.record(src)
+                        text = rec.recognize_google(audio_data).strip().lower()
+
+                    if session:
+                        session.log(f"🔊 Heard: '{text}'")
+                except sr.UnknownValueError:
+                    if session:
+                        session.log("⚠️ Couldn't understand audio")
+                    continue
+                except sr.RequestError as e:
+                    if session:
+                        session.log(f"⚠️ Speech API error: {str(e)[:60]}")
+                    continue
+                finally:
+                    for fp in (mp3_path, wav_path):
+                        try:
+                            os.unlink(fp)
+                        except Exception:
+                            pass
+
+                if not text:
+                    if session:
+                        session.log("⚠️ Empty transcription")
+                    continue
+
+                # ── Submit answer ──
+                bframe.locator("#audio-response").fill(text)
+                time.sleep(1)
+                bframe.locator("#recaptcha-verify-button").click()
+
+                # Wait for verification
+                for _ in range(10):
+                    time.sleep(1)
+                    if page.title().startswith("SOLVED:"):
+                        break
+
+                if page.title().startswith("SOLVED:"):
+                    token = page.title().split("SOLVED:", 1)[1]
+                    if session:
+                        session.log("✅ reCAPTCHA solved via audio! 🎉")
+                    return token
+
+                if session:
+                    session.log("⚠️ Wrong answer, retrying...")
+
+        except Exception as e:
+            if session:
+                session.log(f"⚠️ Solver error: {str(e)[:80]}")
+        finally:
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                browser = None
+            if got_slot:
+                with _active_browsers_lock:
+                    _active_browsers = max(0, _active_browsers - 1)
+                _browser_semaphore.release()
+                got_slot = False
+
+        time.sleep(2)
+
+    if session:
+        session.log("⚠️ Free solver exhausted — will rotate IP")
+    return ""
+
+
 if not PROXY_URL and USE_TOR:
     PROXY_URL = "socks5://127.0.0.1:9050"
     USING_TOR = True
@@ -1436,11 +1732,13 @@ def run_qqtube_tab(session, tab_id):
                     # Try to solve reCAPTCHA using configured service
                     session.log("\U0001f512 reCAPTCHA required \u2014 solving...")
                     session.set_countdown("\U0001f9e9 Solving reCAPTCHA...")
+                    solver_proxy = f"socks5://127.0.0.1:{tor_port}" if USING_TOR else (PROXY_URL or None)
                     recaptcha_response = solve_recaptcha_v2(
                         site_key=recaptcha_key,
                         page_url=PAGE_URL,
                         session=session,
                         timeout=180,
+                        proxy=solver_proxy,
                     )
                     if recaptcha_response:
                         consecutive_recaptchas = 0

@@ -15,6 +15,7 @@ RUN apt-get update && \
     libglib2.0-0 libdbus-1-3 libexpat1 libgcc-s1 libstdc++6 \
     fonts-liberation fonts-noto-color-emoji \
     tesseract-ocr tesseract-ocr-eng wamerican \
+    ffmpeg \
     tor && \
     playwright install chromium && \
     rm -rf /var/lib/apt/lists/*
