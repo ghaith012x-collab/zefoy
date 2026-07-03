@@ -195,13 +195,32 @@ def run_session(session):
             # ── Solve captcha ──
             session.log("🔐 Checking for captcha...")
 
-            # First check if Views button already visible (no captcha needed)
+            # Directly detect captcha by looking for captcha elements
+            captcha_detected = False
             try:
-                page.locator(".t-views-button").wait_for(timeout=8000)
-                session.log("✅ No captcha needed — Views button already visible")
+                page.locator("#captcha-img, .wrapper-capth, #captchatoken").first.wait_for(state="visible", timeout=10000)
+                captcha_detected = True
             except:
-                # Views not visible, so captcha must be present — wait for it
-                session.log("🔐 Captcha detected, waiting for image...")
+                pass
+
+            if not captcha_detected:
+                # No captcha elements found — check if already past captcha
+                try:
+                    page.locator(".t-views-button").wait_for(timeout=5000)
+                    session.log("✅ No captcha needed — Views button already visible")
+                except:
+                    # Neither captcha nor views button — reload and retry
+                    session.log("⚠️ Page not ready, reloading...")
+                    page.reload(wait_until="domcontentloaded")
+                    time.sleep(5)
+                    try:
+                        page.locator("#captcha-img, .wrapper-capth, #captchatoken").first.wait_for(state="visible", timeout=10000)
+                        captcha_detected = True
+                    except:
+                        pass
+
+            if captcha_detected:
+                session.log("🔐 Captcha detected, solving...")
                 for captcha_attempt in range(15):
                     if session.stop_event.is_set():
                         break
@@ -234,7 +253,7 @@ def run_session(session):
                         captcha_input = page.locator("#captchatoken, input[name='captcha_secure'], input[placeholder*='aptcha']")
                         captcha_input.first.fill(answer)
                         time.sleep(0.5)
-                        page.locator(".submit-captcha, button[type='submit']").first.click()
+                        page.locator("button.submit-captcha, form .btn-primary[type='submit']").first.click()
                         time.sleep(5)
 
                         # Check if solved — Views button should appear
