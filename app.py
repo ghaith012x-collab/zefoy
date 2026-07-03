@@ -81,34 +81,41 @@ def remove_small_components(binary_arr, min_size=12):
 
 
 def solve_captcha(img_bytes):
-    """Solve captcha using connected component dot removal + dictionary correction."""
+    """Solve captcha: upscale first, then OCR with and without dot removal."""
     img = Image.open(BytesIO(img_bytes))
     if img.mode != 'RGB':
         img = img.convert('RGB')
     gray = ImageOps.grayscale(img)
-    arr = np.array(gray)
+
+    # Upscale 3x FIRST for better OCR accuracy
+    w, h = gray.size
+    big = gray.resize((w * 3, h * 3), Image.LANCZOS)
+    arr = np.array(big)
 
     results = []
 
-    # Try multiple threshold values
-    for thresh_val in [125, 135, 145, 155]:
-        # Threshold: dark pixels (text) = 1
-        binary = (arr < thresh_val).astype(np.uint8)
-
-        # Remove small connected components (background dots)
-        cleaned = remove_small_components(binary, min_size=12)
-
-        # Create image: black text on white background
-        clean_img = Image.fromarray(((1 - cleaned) * 255).astype('uint8'))
-
-        # Upscale 4x for better OCR
-        big = clean_img.resize((clean_img.width * 4, clean_img.height * 4), Image.LANCZOS)
-
-        # OCR with different PSM modes
+    # ── Strategy 1: Direct threshold (no dot removal) ──
+    for thresh_val in [120, 140, 160, 180]:
+        binary_img = Image.fromarray(((arr >= thresh_val) * 255).astype('uint8'))
         for psm in [7, 6]:
             config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyz'
             try:
-                text = pytesseract.image_to_string(big, config=config).strip()
+                text = pytesseract.image_to_string(binary_img, config=config).strip()
+                text = re.sub(r'[^a-z]', '', text.lower())
+                if len(text) >= 2:
+                    results.append(text)
+            except:
+                pass
+
+    # ── Strategy 2: With dot removal ──
+    for thresh_val in [130, 150]:
+        binary = (arr < thresh_val).astype(np.uint8)
+        cleaned = remove_small_components(binary, min_size=30)  # bigger min_size for 3x image
+        clean_img = Image.fromarray(((1 - cleaned) * 255).astype('uint8'))
+        for psm in [7, 6]:
+            config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyz'
+            try:
+                text = pytesseract.image_to_string(clean_img, config=config).strip()
                 text = re.sub(r'[^a-z]', '', text.lower())
                 if len(text) >= 2:
                     results.append(text)
