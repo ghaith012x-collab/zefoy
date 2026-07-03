@@ -1,12 +1,38 @@
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from playwright.sync_api import sync_playwright
-import queue, threading, time, re, sys
+import queue, threading, time, re, sys, difflib
 from PIL import Image, ImageFilter, ImageOps
 import pytesseract
 from io import BytesIO
+from collections import Counter, deque
+import numpy as np
 
 app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
+
+# ─── Load word dictionary once at startup ───
+WORD_LIST = []
+def load_dictionary():
+    global WORD_LIST
+    try:
+        import urllib.request
+        url = "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
+        data = urllib.request.urlopen(url, timeout=10).read().decode()
+        WORD_LIST = [w.strip().lower() for w in data.splitlines() if 2 <= len(w.strip()) <= 10]
+        print(f"[BOT] Dictionary loaded: {len(WORD_LIST)} words", flush=True)
+    except Exception as e:
+        print(f"[BOT] Dictionary load failed: {e}", flush=True)
+        # Fallback: use /usr/share/dict/words if available
+        try:
+            with open('/usr/share/dict/words') as f:
+                WORD_LIST = [w.strip().lower() for w in f if 2 <= len(w.strip()) <= 10]
+            print(f"[BOT] Fallback dictionary: {len(WORD_LIST)} words", flush=True)
+        except:
+            WORD_LIST = []
+
+# Load on import in background
+threading.Thread(target=load_dictionary, daemon=True).start()
+
 
 def log(msg):
     print(f"[BOT] {msg}", flush=True)
@@ -24,6 +50,87 @@ def parse_wait_time(text):
     if secs:
         total += int(secs.group(1))
     return total
+
+
+def remove_small_components(binary_arr, min_size=12):
+    """Remove connected components smaller than min_size using BFS."""
+    h, w = binary_arr.shape
+    visited = np.zeros((h, w), dtype=bool)
+    result = np.zeros((h, w), dtype=np.uint8)
+
+    for y in range(h):
+        for x in range(w):
+            if binary_arr[y, x] == 1 and not visited[y, x]:
+                # BFS flood fill
+                component = []
+                q = deque([(y, x)])
+                visited[y, x] = True
+                while q:
+                    cy, cx = q.popleft()
+                    component.append((cy, cx))
+                    for dy, dx in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]:
+                        ny, nx = cy + dy, cx + dx
+                        if 0 <= ny < h and 0 <= nx < w and binary_arr[ny, nx] == 1 and not visited[ny, nx]:
+                            visited[ny, nx] = True
+                            q.append((ny, nx))
+
+                if len(component) >= min_size:
+                    for cy, cx in component:
+                        result[cy, cx] = 1
+    return result
+
+
+def solve_captcha(img_bytes):
+    """Solve captcha using connected component dot removal + dictionary correction."""
+    img = Image.open(BytesIO(img_bytes))
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    gray = ImageOps.grayscale(img)
+    arr = np.array(gray)
+
+    results = []
+
+    # Try multiple threshold values
+    for thresh_val in [125, 135, 145, 155]:
+        # Threshold: dark pixels (text) = 1
+        binary = (arr < thresh_val).astype(np.uint8)
+
+        # Remove small connected components (background dots)
+        cleaned = remove_small_components(binary, min_size=12)
+
+        # Create image: black text on white background
+        clean_img = Image.fromarray(((1 - cleaned) * 255).astype('uint8'))
+
+        # Upscale 4x for better OCR
+        big = clean_img.resize((clean_img.width * 4, clean_img.height * 4), Image.LANCZOS)
+
+        # OCR with different PSM modes
+        for psm in [7, 6]:
+            config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyz'
+            try:
+                text = pytesseract.image_to_string(big, config=config).strip()
+                text = re.sub(r'[^a-z]', '', text.lower())
+                if len(text) >= 2:
+                    results.append(text)
+            except:
+                pass
+
+    log(f"OCR candidates: {results}")
+
+    if not results:
+        return ""
+
+    # Most common OCR result
+    most_common = Counter(results).most_common(1)[0][0]
+
+    # Dictionary correction
+    if WORD_LIST:
+        matches = difflib.get_close_matches(most_common, WORD_LIST, n=3, cutoff=0.5)
+        log(f"OCR most common: '{most_common}' → dictionary matches: {matches}")
+        if matches:
+            return matches[0]
+
+    return most_common
 
 
 def run_bot(tiktok_url, q):
@@ -53,81 +160,26 @@ def run_bot(tiktok_url, q):
             emit(q, 2, "Checking for captcha...")
             log("Checking for captcha...")
 
-            def solve_captcha(img_bytes):
-                """Try multiple OCR strategies on the captcha image."""
-                img = Image.open(BytesIO(img_bytes))
-
-                # Strategy 1: Grayscale + high contrast + threshold
-                gray = ImageOps.grayscale(img)
-                # Upscale 3x for better OCR
-                big = gray.resize((gray.width * 3, gray.height * 3), Image.LANCZOS)
-                # Sharpen
-                sharp = big.filter(ImageFilter.SHARPEN)
-                # Threshold: make it pure black text on white
-                thresh = sharp.point(lambda px: 255 if px > 140 else 0)
-
-                results = []
-                # Try different PSM modes
-                for psm in [7, 8, 13, 6]:
-                    config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-                    try:
-                        text = pytesseract.image_to_string(thresh, config=config).strip()
-                        text = re.sub(r'[^A-Za-z0-9]', '', text).lower()
-                        if len(text) >= 2:
-                            results.append(text)
-                    except:
-                        pass
-
-                # Strategy 2: Invert and retry
-                inverted = ImageOps.invert(thresh)
-                for psm in [7, 8]:
-                    config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-                    try:
-                        text = pytesseract.image_to_string(inverted, config=config).strip()
-                        text = re.sub(r'[^A-Za-z0-9]', '', text).lower()
-                        if len(text) >= 2:
-                            results.append(text)
-                    except:
-                        pass
-
-                # Strategy 3: Raw image
+            for captcha_attempt in range(8):
                 try:
-                    text = pytesseract.image_to_string(img, config='--psm 7').strip()
-                    text = re.sub(r'[^A-Za-z0-9]', '', text).lower()
-                    if len(text) >= 2:
-                        results.append(text)
-                except:
-                    pass
-
-                log(f"OCR candidates: {results}")
-                # Pick the most common result, or the first one
-                if not results:
-                    return ""
-                from collections import Counter
-                most_common = Counter(results).most_common(1)[0][0]
-                return most_common
-
-            for captcha_attempt in range(5):
-                try:
-                    captcha_img = page.locator("img[src*='_CAPTCHA']")
+                    captcha_img = page.locator("#captcha-img, img[src*='_CAPTCHA']")
                     if captcha_img.count() == 0:
                         log("No captcha found, proceeding...")
                         break
 
                     emit(q, 2, f"Solving captcha (attempt {captcha_attempt + 1})...")
                     log(f"Captcha attempt {captcha_attempt + 1}...")
-                    time.sleep(1)
+                    time.sleep(2)
 
-                    # Screenshot the captcha image
+                    # Screenshot the captcha image element directly
                     captcha_bytes = captcha_img.first.screenshot()
                     captcha_text = solve_captcha(captcha_bytes)
-                    log(f"Captcha OCR result: '{captcha_text}'")
+                    log(f"Captcha answer: '{captcha_text}'")
 
                     if not captcha_text:
                         log("OCR returned empty, refreshing captcha...")
-                        # Click the refresh button to get a new captcha
                         try:
-                            page.locator(".wrapper-capth button, .wrapper-capth .fa-refresh, .wrapper-capth .fa-sync, [onclick*='captcha']").first.click()
+                            page.locator(".refresh-capthca-btn-new").click()
                         except:
                             page.reload(wait_until="domcontentloaded")
                         time.sleep(3)
@@ -146,9 +198,20 @@ def run_bot(tiktok_url, q):
                         emit(q, 2, "Captcha solved ✅")
                         break
                     except:
-                        log("Captcha was wrong, page still shows captcha. Retrying...")
-                        emit(q, 2, f"Wrong answer, retrying...")
-                        time.sleep(2)
+                        log("Captcha was wrong, refreshing for retry...")
+                        emit(q, 2, f"Wrong answer '{captcha_text}', retrying...")
+                        # Dismiss error modal if present
+                        try:
+                            page.locator(".modal .btn-secondary, .modal .close").first.click()
+                            time.sleep(1)
+                        except:
+                            pass
+                        # Refresh captcha for new image
+                        try:
+                            page.locator(".refresh-capthca-btn-new").click()
+                        except:
+                            pass
+                        time.sleep(3)
                         continue
 
                 except Exception as e:
@@ -259,7 +322,7 @@ def run_bot(tiktok_url, q):
                             }
 
                             // Strategy 2: scan below input for elements with digits
-                            const input = document.querySelector('input[placeholder="Enter Video URL"]');
+                            const input = document.querySelector('.t-views-menu input[placeholder="Enter Video URL"]');
                             if (!input) return null;
                             const inputRect = input.getBoundingClientRect();
                             const startY = inputRect.bottom + 10;
