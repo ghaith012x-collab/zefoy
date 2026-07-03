@@ -290,6 +290,7 @@ def run_session(session):
             session.log("✅ Views panel opened!")
 
             # ── Main loop ──
+            zero_streak = 0  # consecutive cycles returning 0 views
             while not session.stop_event.is_set():
                 session.cycles += 1
                 cycle = session.cycles
@@ -413,7 +414,28 @@ def run_session(session):
                     elif state_type == 'success':
                         views = page_state.get('views', 0)
                         session.total_views += views
-                        session.log(f"🎉 +{views} views! Total: {session.total_views:,}")
+                        if views > 0:
+                            zero_streak = 0
+                            session.log(f"🎉 +{views} views! Total: {session.total_views:,}")
+                        else:
+                            zero_streak += 1
+                            session.log(f"⚠️ Zefoy returned 0 views (streak: {zero_streak})")
+                            if zero_streak >= 3:
+                                wait = min(zero_streak * 30, 180)
+                                session.log(f"⏸️ Views service appears down — waiting {wait}s before retry")
+                                for remaining in range(wait, 0, -1):
+                                    if session.stop_event.is_set():
+                                        break
+                                    mins = remaining // 60
+                                    secs = remaining % 60
+                                    time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
+                                    session.set_countdown(f"⏸️ 0-views cooldown: {time_str}")
+                                    time.sleep(1)
+                                session.set_countdown("")
+                            if zero_streak >= 5:
+                                session.log("🔄 Refreshing page to reset session...")
+                                page.reload()
+                                time.sleep(5)
                         break
 
                     elif state_type == 'bar':
@@ -423,6 +445,7 @@ def run_session(session):
                         time.sleep(2)
 
                         # Wait for success
+                        views = 0
                         for _ in range(30):
                             try:
                                 body = page.inner_text("body")
@@ -430,11 +453,33 @@ def run_session(session):
                                     match = re.search(r'[Ss]uccessfully\s+(\d+)', body)
                                     views = int(match.group(1)) if match else 0
                                     session.total_views += views
-                                    session.log(f"🎉 +{views} views! Total: {session.total_views:,}")
                                     break
                             except:
                                 pass
                             time.sleep(1)
+
+                        if views > 0:
+                            zero_streak = 0
+                            session.log(f"🎉 +{views} views! Total: {session.total_views:,}")
+                        else:
+                            zero_streak += 1
+                            session.log(f"⚠️ Zefoy returned 0 views (streak: {zero_streak})")
+                            if zero_streak >= 3:
+                                wait = min(zero_streak * 30, 180)
+                                session.log(f"⏸️ Views service appears down — waiting {wait}s before retry")
+                                for remaining in range(wait, 0, -1):
+                                    if session.stop_event.is_set():
+                                        break
+                                    mins = remaining // 60
+                                    secs = remaining % 60
+                                    time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
+                                    session.set_countdown(f"⏸️ 0-views cooldown: {time_str}")
+                                    time.sleep(1)
+                                session.set_countdown("")
+                            if zero_streak >= 5:
+                                session.log("🔄 Refreshing page to reset session...")
+                                page.reload()
+                                time.sleep(5)
                         break
 
                     elif state_type == 'loading':
