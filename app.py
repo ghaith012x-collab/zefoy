@@ -665,24 +665,33 @@ def run_tab(session, tab_id):
                                     }
 
                                     if (lower.includes('successfully')) {
-                                        const nums = body.match(/\\d+/g);
                                         let count = 0;
-                                        if (nums) {
-                                            const lines = body.split('\\n');
-                                            for (const line of lines) {
-                                                if (line.toLowerCase().includes('successfully')) {
-                                                    const lineNums = line.match(/\\d+/g);
-                                                    if (lineNums) {
-                                                        count = Math.max(...lineNums.map(Number));
-                                                    }
-                                                    break;
-                                                }
-                                            }
-                                            if (count === 0) {
-                                                count = Math.max(...nums.map(Number).filter(n => n < 100000));
+                                        const lines = body.split('\\n');
+                                        let successLine = '';
+                                        for (const line of lines) {
+                                            if (line.toLowerCase().includes('successfully')) {
+                                                successLine = line;
+                                                break;
                                             }
                                         }
-                                        return {type: 'success', count: count || 0};
+                                        // Log the raw success line for debugging
+                                        console.log('ZEFOY_SUCCESS_RAW: ' + successLine);
+                                        if (successLine) {
+                                            const lineNums = successLine.match(/\\d+/g);
+                                            if (lineNums) {
+                                                // Filter out year-like numbers (2020-2035), month/day (1-31 only if line has date-like pattern)
+                                                const hasDate = /\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4}|\\d{4}[\\/-]\\d{1,2}|[A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4}/.test(successLine);
+                                                const filtered = lineNums.map(Number).filter(n => {
+                                                    if (n >= 2020 && n <= 2035) return false; // year
+                                                    if (n > 100000) return false; // unreasonably large
+                                                    return true;
+                                                });
+                                                if (filtered.length > 0) {
+                                                    count = Math.max(...filtered);
+                                                }
+                                            }
+                                        }
+                                        return {type: 'success', count: count, rawLine: successLine};
                                     }
 
                                     const spinners = document.querySelectorAll('.fa-spinner, .fa-spin, .spinner, [class*="loading"], [class*="spin"]');
@@ -777,7 +786,10 @@ def run_tab(session, tab_id):
                                 continue
 
                             elif state_type == 'success':
+                                raw_line = page_state.get('rawLine', '')
                                 count = page_state.get('count', 0)
+                                if raw_line:
+                                    session.log(f"📝 Zefoy raw: {raw_line[:120]}")
                                 new_total = session.add_count(count)
                                 if count > 0:
                                     zero_streak = 0
