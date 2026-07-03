@@ -194,48 +194,67 @@ def run_session(session):
 
             # ── Solve captcha ──
             session.log("🔐 Checking for captcha...")
-            for captcha_attempt in range(10):
-                if session.stop_event.is_set():
-                    break
-                try:
-                    captcha_img = page.locator("#captcha-img, img[src*='_CAPTCHA']")
-                    if captcha_img.count() == 0:
-                        session.log("✅ No captcha found")
+
+            # First check if Views button already visible (no captcha needed)
+            try:
+                page.locator(".t-views-button").wait_for(timeout=8000)
+                session.log("✅ No captcha needed — Views button already visible")
+            except:
+                # Views not visible, so captcha must be present — wait for it
+                session.log("🔐 Captcha detected, waiting for image...")
+                for captcha_attempt in range(15):
+                    if session.stop_event.is_set():
                         break
-
-                    session.log(f"🔐 Solving captcha (attempt {captcha_attempt + 1})...")
-                    time.sleep(2)
-                    captcha_bytes = captcha_img.first.screenshot()
-                    answer = solve_captcha(captcha_bytes)
-
-                    if not answer:
-                        session.log("⚠️ OCR failed, refreshing...")
-                        try: page.locator(".refresh-capthca-btn-new").click()
-                        except: page.reload(wait_until="domcontentloaded")
-                        time.sleep(3)
-                        continue
-
-                    session.log(f"🔤 Answer: '{answer}'")
-                    page.locator("#captchatoken").fill(answer)
-                    time.sleep(0.5)
-                    page.locator(".submit-captcha").click()
-                    time.sleep(5)
-
                     try:
-                        page.locator(".t-views-button").wait_for(timeout=5000)
-                        session.log("✅ Captcha solved!")
-                        break
-                    except:
-                        session.log(f"❌ Wrong answer '{answer}', retrying...")
-                        try: page.locator(".modal .btn-secondary, .modal .close").first.click()
-                        except: pass
-                        time.sleep(1)
-                        try: page.locator(".refresh-capthca-btn-new").click()
-                        except: pass
-                        time.sleep(3)
-                except Exception as e:
-                    session.log(f"⚠️ Captcha error: {e}")
-                    time.sleep(2)
+                        # Wait for captcha image to actually appear
+                        captcha_img = page.locator("#captcha-img, img[src*='CAPTCHA'], img[src*='captcha']")
+                        try:
+                            captcha_img.first.wait_for(state="visible", timeout=10000)
+                        except:
+                            # Maybe page hasn't loaded — reload and retry
+                            session.log("⚠️ Captcha image not loading, reloading page...")
+                            page.reload(wait_until="domcontentloaded")
+                            time.sleep(5)
+                            continue
+
+                        session.log(f"🔐 Solving captcha (attempt {captcha_attempt + 1})...")
+                        time.sleep(2)
+                        captcha_bytes = captcha_img.first.screenshot()
+                        answer = solve_captcha(captcha_bytes)
+
+                        if not answer:
+                            session.log("⚠️ OCR failed, refreshing captcha...")
+                            try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
+                            except: page.reload(wait_until="domcontentloaded")
+                            time.sleep(3)
+                            continue
+
+                        session.log(f"🔤 Answer: '{answer}'")
+                        # Fill and submit
+                        captcha_input = page.locator("#captchatoken, input[name='captcha_secure'], input[placeholder*='aptcha']")
+                        captcha_input.first.fill(answer)
+                        time.sleep(0.5)
+                        page.locator(".submit-captcha, button[type='submit']").first.click()
+                        time.sleep(5)
+
+                        # Check if solved — Views button should appear
+                        try:
+                            page.locator(".t-views-button").wait_for(timeout=8000)
+                            session.log("✅ Captcha solved!")
+                            break
+                        except:
+                            session.log(f"❌ Wrong answer '{answer}', retrying...")
+                            # Dismiss any error modal
+                            try: page.locator(".modal .btn-secondary, .modal .close, .swal2-confirm, [class*='close']").first.click()
+                            except: pass
+                            time.sleep(1)
+                            # Refresh captcha
+                            try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
+                            except: pass
+                            time.sleep(3)
+                    except Exception as e:
+                        session.log(f"⚠️ Captcha error: {e}")
+                        time.sleep(2)
 
             # ── Click Views button ──
             session.log("👁️ Looking for Views button...")
