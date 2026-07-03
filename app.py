@@ -157,8 +157,8 @@ def solve_captcha(img_bytes):
                 text = re.sub(r'[^a-z]', '', text.lower())
                 if len(text) >= 2:
                     results.append(text)
-            except:
-                pass
+            except Exception as ocr_err:
+                print(f"[BOT] OCR strategy-1 error (thresh={thresh_val}, psm={psm}): {ocr_err}", flush=True)
 
     # Strategy 2: Dot removal
     for thresh_val in [130, 150]:
@@ -172,8 +172,8 @@ def solve_captcha(img_bytes):
                 text = re.sub(r'[^a-z]', '', text.lower())
                 if len(text) >= 2:
                     results.append(text)
-            except:
-                pass
+            except Exception as ocr_err:
+                print(f"[BOT] OCR strategy-2 error (thresh={thresh_val}, psm={psm}): {ocr_err}", flush=True)
 
     print(f"[BOT] OCR candidates: {results}", flush=True)
     if not results:
