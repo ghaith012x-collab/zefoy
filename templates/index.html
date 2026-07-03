@@ -3,240 +3,136 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zefoy Auto</title>
+    <title>Zefoy Bot</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            background: #0a0a0a;
-            color: #e0e0e0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;
-            min-height: 100vh;
-            padding: 40px 20px;
-        }
-        .container {
-            width: 100%;
-            max-width: 520px;
-        }
-        h1 {
-            font-size: 28px;
-            margin-bottom: 6px;
-            background: linear-gradient(90deg, #00d4ff, #a855f7);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .subtitle { color: #666; margin-bottom: 24px; font-size: 14px; }
-
-        input {
-            width: 100%;
-            padding: 16px 18px;
-            border: 1px solid #2a2a2a;
-            border-radius: 14px;
-            background: #141414;
-            color: #fff;
-            font-size: 15px;
-            margin-bottom: 12px;
-            outline: none;
-            transition: all 0.2s;
-        }
-        input:focus { border-color: #00d4ff; background: #1a1a1a; }
-
-        .btn-row { display: flex; gap: 10px; }
-        button {
-            flex: 1;
-            padding: 16px;
-            border: none;
-            border-radius: 14px;
-            color: #fff;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        #go {
-            background: linear-gradient(90deg, #00d4ff, #a855f7);
-        }
-        #stop {
-            background: #333;
-            display: none;
-            flex: 0 0 auto;
-            padding: 16px 24px;
-        }
-        #stop:hover { background: #ff4444; }
-        button:hover { opacity: 0.9; }
-        button:active { transform: scale(0.98); }
-        button:disabled { opacity: 0.4; cursor: not-allowed; }
-
-        .stats {
-            margin-top: 16px;
-            display: none;
-            background: #111;
-            border: 1px solid #222;
-            border-radius: 14px;
-            padding: 16px 20px;
-            text-align: center;
-        }
-        .stats-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #555; }
-        .stats-value { font-size: 32px; font-weight: 700; color: #00ff64; margin-top: 4px; }
-
-        .log-container {
-            margin-top: 16px;
-            background: #111;
-            border: 1px solid #222;
-            border-radius: 16px;
-            padding: 20px;
-            min-height: 200px;
-            max-height: 600px;
-            overflow-y: auto;
-        }
-        .log-container.hidden { display: none; }
-        .log-title {
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: #555;
-            margin-bottom: 12px;
-        }
-        .log-entry {
-            padding: 10px 0;
-            border-bottom: 1px solid #1a1a1a;
-            font-size: 13px;
-            animation: fadeIn 0.3s ease;
-        }
-        .log-entry:last-child { border-bottom: none; }
-        .log-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 4px;
-        }
-        .log-step {
-            background: #1a1a1a;
-            color: #888;
-            font-size: 11px;
-            padding: 2px 8px;
-            border-radius: 6px;
-            min-width: 32px;
-            text-align: center;
-            font-weight: 600;
-        }
-        .log-entry.success .log-step { background: rgba(0,255,100,0.15); color: #00ff64; }
-        .log-entry.error .log-step { background: rgba(255,0,0,0.15); color: #ff4444; }
-        .log-entry.active .log-step { background: rgba(0,212,255,0.15); color: #00d4ff; }
-        .log-entry.wait .log-step { background: rgba(255,165,0,0.15); color: #ffa500; }
-        .log-msg { flex: 1; line-height: 1.5; word-break: break-word; }
-
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        h1 { font-size: 1.8rem; margin-bottom: 20px; color: #fff; }
+        .total { font-size: 1.4rem; color: #00e676; margin-bottom: 15px; font-weight: bold; }
+        .container { width: 100%; max-width: 500px; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        input { flex: 1; padding: 12px 16px; border: 1px solid #333; border-radius: 8px; background: #1a1a1a; color: #fff; font-size: 1rem; outline: none; }
+        input:focus { border-color: #4a90d9; }
+        button { padding: 12px 24px; border: none; border-radius: 8px; background: #4a90d9; color: #fff; font-size: 1rem; cursor: pointer; font-weight: 600; white-space: nowrap; }
+        button:hover { background: #3a7bc8; }
+        button:disabled { background: #333; cursor: not-allowed; }
+        .status { padding: 10px 16px; border-radius: 8px; background: #1a1a1a; margin-bottom: 10px; font-weight: 500; border-left: 3px solid #4a90d9; }
+        .status.success { border-left-color: #00e676; color: #00e676; }
+        .status.error { border-left-color: #ff5252; color: #ff5252; }
+        .status.wait { border-left-color: #ff9800; color: #ff9800; }
+        #log { max-height: 400px; overflow-y: auto; }
+        .log-entry { padding: 6px 12px; margin: 4px 0; border-radius: 4px; background: #1a1a1a; font-size: 0.9rem; color: #aaa; }
     </style>
 </head>
 <body>
+    <h1>⚡ Zefoy Views Bot</h1>
+    <div class="total" id="totalViews" style="display:none">Total views sent: 0</div>
     <div class="container">
-        <h1>Zefoy Auto</h1>
-        <p class="subtitle">Paste link. Watch it work live. Loops automatically.</p>
-        <input type="text" id="url" placeholder="https://vm.tiktok.com/..." autocomplete="off">
-        <div class="btn-row">
-            <button id="go" onclick="start()">Confirm & Send Views</button>
+        <div class="input-group">
+            <input type="text" id="url" placeholder="Paste TikTok URL...">
+            <button id="startBtn" onclick="startBot()">Start</button>
         </div>
-
-        <div id="stats" class="stats">
-            <div class="stats-label">Total Views Sent</div>
-            <div id="stats-value" class="stats-value">0</div>
-        </div>
-
-        <div id="logs" class="log-container hidden">
-            <div class="log-title">Live Activity</div>
-            <div id="log-content"></div>
-        </div>
+        <div id="status" class="status" style="display:none"></div>
+        <div id="log"></div>
     </div>
 
     <script>
         let totalViews = 0;
 
-        function addLog(step, msg, type='normal') {
-            const content = document.getElementById('log-content');
-            const div = document.createElement('div');
-            div.className = `log-entry ${type}`;
-            div.innerHTML = `<div class="log-header"><span class="log-step">${step}</span><span class="log-msg">${msg}</span></div>`;
-            content.appendChild(div);
-            document.getElementById('logs').classList.remove('hidden');
-            content.scrollTop = content.scrollHeight;
-
-            // Keep log manageable — remove old entries beyond 50
-            while (content.children.length > 50) {
-                content.removeChild(content.firstChild);
-            }
-        }
-
-        function updateStats(msg) {
-            const match = msg.match(/Total:\s*(\d+)/);
-            if (match) {
-                totalViews = parseInt(match[1]);
-                document.getElementById('stats-value').textContent = totalViews;
-                document.getElementById('stats').style.display = 'block';
-            }
-        }
-
-        function start() {
+        function startBot() {
             const url = document.getElementById('url').value.trim();
-            const btn = document.getElementById('go');
-            const content = document.getElementById('log-content');
+            if (!url) return alert('Enter a TikTok URL');
 
-            if (!url) return;
+            const btn = document.getElementById('startBtn');
             btn.disabled = true;
-            content.innerHTML = '';
+            btn.textContent = 'Running...';
+            document.getElementById('log').innerHTML = '';
+            document.getElementById('status').style.display = 'block';
             totalViews = 0;
-            document.getElementById('stats-value').textContent = '0';
-            document.getElementById('stats').style.display = 'block';
-            document.getElementById('logs').classList.remove('hidden');
-            addLog('...', 'Starting automation...', 'active');
 
-            fetch('/stream', {
+            const es = new EventSource('/start?' + new URLSearchParams({}));
+
+            fetch('/start', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({url})
-            }).then(res => {
-                const reader = res.body.getReader();
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            }).then(response => {
+                const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
 
                 function read() {
-                    reader.read().then(({done, value}) => {
+                    reader.read().then(({ done, value }) => {
                         if (done) {
                             btn.disabled = false;
+                            btn.textContent = 'Start';
                             return;
                         }
-                        buffer += decoder.decode(value, {stream: true});
-                        const parts = buffer.split('\n\n');
-                        buffer = parts.pop(); // keep incomplete chunk
 
-                        parts.forEach(part => {
-                            if (part.startsWith('data: ')) {
-                                try {
-                                    const data = JSON.parse(part.slice(6));
-                                    let type = 'active';
-                                    if (data.step === 99) type = 'error';
-                                    else if (data.step === 17 || data.step === 18) type = 'success';
-                                    else if (data.step === 13) type = 'wait';
-                                    else if (data.done && data.step !== 99) type = 'success';
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop();
 
-                                    addLog(data.step, data.message, type);
-                                    updateStats(data.message);
+                        for (const line of lines) {
+                            if (!line.startsWith('data: ')) continue;
+                            const data = line.slice(6).trim();
 
-                                    if (data.done) btn.disabled = false;
-                                } catch(e) {}
+                            if (data === 'DONE') {
+                                btn.disabled = false;
+                                btn.textContent = 'Start';
+                                return;
                             }
-                        });
+
+                            const pipe = data.indexOf('|');
+                            if (pipe === -1) continue;
+
+                            const step = data.substring(0, pipe);
+                            const msg = data.substring(pipe + 1);
+                            const statusEl = document.getElementById('status');
+
+                            // Update status
+                            statusEl.textContent = msg;
+                            statusEl.className = 'status';
+                            if (msg.includes('✅')) statusEl.classList.add('success');
+                            else if (msg.includes('Error')) statusEl.classList.add('error');
+                            else if (msg.includes('wait') || msg.includes('Rate')) statusEl.classList.add('wait');
+
+                            // Track total views
+                            const viewMatch = msg.match(/Total:\s*(\d+)/);
+                            if (viewMatch) {
+                                totalViews = parseInt(viewMatch[1]);
+                                const tvEl = document.getElementById('totalViews');
+                                tvEl.textContent = 'Total views sent: ' + totalViews;
+                                tvEl.style.display = 'block';
+                            }
+
+                            // Add to log
+                            const logEl = document.getElementById('log');
+                            const entry = document.createElement('div');
+                            entry.className = 'log-entry';
+                            entry.textContent = msg;
+                            logEl.insertBefore(entry, logEl.firstChild);
+
+                            // Keep log manageable
+                            while (logEl.children.length > 50) {
+                                logEl.removeChild(logEl.lastChild);
+                            }
+                        }
                         read();
                     });
                 }
                 read();
-            }).catch(e => {
-                addLog('ERR', 'Connection failed: ' + e.message, 'error');
+            }).catch(err => {
+                document.getElementById('status').textContent = 'Connection error: ' + err;
+                document.getElementById('status').className = 'status error';
                 btn.disabled = false;
+                btn.textContent = 'Start';
             });
         }
+
+        document.getElementById('url').addEventListener('keydown', e => {
+            if (e.key === 'Enter') startBot();
+        });
     </script>
 </body>
 </html>
