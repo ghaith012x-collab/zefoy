@@ -1,243 +1,447 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zefoy Bot</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 20px; }
-        h1 { font-size: 1.8rem; margin-bottom: 20px; color: #fff; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zefoy Views Bot</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0a0a0f;
+    color: #e0e0e0;
+    min-height: 100vh;
+  }
 
-        .counter-box {
-            background: linear-gradient(135deg, #1a2a1a, #0f1f0f);
-            border: 2px solid #00e676;
-            border-radius: 16px;
-            padding: 20px 40px;
-            margin-bottom: 20px;
-            text-align: center;
-            min-width: 280px;
-            box-shadow: 0 0 30px rgba(0, 230, 118, 0.15);
-        }
-        .counter-label { font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; }
-        .counter-value { font-size: 3rem; font-weight: 800; color: #00e676; font-variant-numeric: tabular-nums; transition: transform 0.2s; }
-        .counter-value.bump { transform: scale(1.15); }
-        .counter-cycles { font-size: 0.9rem; color: #666; margin-top: 6px; }
-        .counter-timer { font-size: 1rem; color: #ff9800; margin-top: 10px; font-weight: 600; }
-        .counter-timer.hidden { display: none; }
+  .header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    padding: 20px 30px;
+    border-bottom: 1px solid #2a2a4a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header h1 {
+    font-size: 24px;
+    background: linear-gradient(90deg, #00d2ff, #7b2ff7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .header .global-stats {
+    display: flex;
+    gap: 20px;
+    font-size: 14px;
+    color: #888;
+  }
+  .header .global-stats span { color: #00d2ff; font-weight: bold; }
 
-        .container { width: 100%; max-width: 500px; }
-        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
-        input { flex: 1; padding: 12px 16px; border: 1px solid #333; border-radius: 8px; background: #1a1a1a; color: #fff; font-size: 1rem; outline: none; }
-        input:focus { border-color: #4a90d9; }
-        button { padding: 12px 24px; border: none; border-radius: 8px; background: #4a90d9; color: #fff; font-size: 1rem; cursor: pointer; font-weight: 600; white-space: nowrap; }
-        button:hover { background: #3a7bc8; }
-        button:disabled { background: #333; cursor: not-allowed; }
-        .status { padding: 10px 16px; border-radius: 8px; background: #1a1a1a; margin-bottom: 10px; font-weight: 500; border-left: 3px solid #4a90d9; }
-        .status.success { border-left-color: #00e676; color: #00e676; }
-        .status.error { border-left-color: #ff5252; color: #ff5252; }
-        .status.wait { border-left-color: #ff9800; color: #ff9800; }
-        #log { max-height: 400px; overflow-y: auto; }
-        .log-entry { padding: 6px 12px; margin: 4px 0; border-radius: 4px; background: #1a1a1a; font-size: 0.9rem; color: #aaa; }
-        .log-entry.highlight { color: #00e676; background: #1a2a1a; }
-    </style>
+  .container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+
+  /* ── New Session Bar ── */
+  .new-session {
+    background: #12121f;
+    border: 1px solid #2a2a4a;
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .new-session input {
+    flex: 1;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 10px 16px;
+    color: #fff;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .new-session input:focus { border-color: #7b2ff7; }
+  .new-session input::placeholder { color: #555; }
+  .new-session button {
+    background: linear-gradient(135deg, #7b2ff7, #00d2ff);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 24px;
+    color: #fff;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    white-space: nowrap;
+  }
+  .new-session button:hover { opacity: 0.85; }
+  .new-session button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ── Session Cards ── */
+  .sessions-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .session-card {
+    background: #12121f;
+    border: 1px solid #2a2a4a;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .session-card:hover { border-color: #444; }
+  .session-card.active { border-color: #7b2ff7; }
+
+  .session-header {
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+  }
+  .session-header:hover { background: #1a1a2e; }
+
+  .session-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .session-name {
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .session-url {
+    color: #666;
+    font-size: 12px;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .status-badge {
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .status-running { background: rgba(0, 210, 100, 0.15); color: #00d264; }
+  .status-starting { background: rgba(255, 170, 0, 0.15); color: #ffaa00; }
+  .status-stopping { background: rgba(255, 100, 0, 0.15); color: #ff6400; }
+  .status-stopped { background: rgba(128, 128, 128, 0.15); color: #888; }
+  .status-error { background: rgba(255, 50, 50, 0.15); color: #ff3232; }
+
+  .session-stats {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    font-size: 13px;
+  }
+  .stat { color: #888; }
+  .stat b { color: #00d2ff; }
+
+  .session-actions button {
+    background: #2a2a3e;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 5px 12px;
+    color: #ccc;
+    font-size: 12px;
+    cursor: pointer;
+    margin-left: 8px;
+  }
+  .session-actions button.stop-btn { border-color: #ff3232; color: #ff3232; }
+  .session-actions button:hover { background: #333; }
+
+  /* ── Session Detail (logs) ── */
+  .session-detail {
+    display: none;
+    border-top: 1px solid #1e1e32;
+  }
+  .session-detail.open { display: block; }
+
+  .session-detail-inner {
+    padding: 12px 20px 16px;
+  }
+
+  .countdown-bar {
+    background: linear-gradient(90deg, rgba(123, 47, 247, 0.2), rgba(0, 210, 255, 0.2));
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin-bottom: 10px;
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    display: none;
+  }
+  .countdown-bar.visible { display: block; }
+
+  .log-box {
+    background: #0a0a14;
+    border: 1px solid #1e1e32;
+    border-radius: 8px;
+    padding: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .log-box::-webkit-scrollbar { width: 6px; }
+  .log-box::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  .log-line { color: #aaa; }
+  .log-line:last-child { color: #fff; }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #444;
+  }
+  .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-state p { font-size: 14px; }
+</style>
 </head>
 <body>
-    <h1>⚡ Zefoy Views Bot</h1>
 
-    <div class="counter-box" id="counterBox">
-        <div class="counter-label">Total Views Sent</div>
-        <div class="counter-value" id="counterValue">0</div>
-        <div class="counter-cycles" id="counterCycles">Waiting to start...</div>
-        <div class="counter-timer hidden" id="counterTimer"></div>
+<div class="header">
+  <h1>⚡ Zefoy Views Bot</h1>
+  <div class="global-stats">
+    <div>Sessions: <span id="globalSessions">0</span></div>
+    <div>Total Views: <span id="globalViews">0</span></div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="new-session">
+    <input type="text" id="urlInput" placeholder="Paste TikTok video URL..." />
+    <button id="startBtn" onclick="startSession()">▶ Start Session</button>
+  </div>
+
+  <div id="sessionsContainer" class="sessions-grid">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">🚀</div>
+      <p>No sessions yet. Paste a TikTok URL and hit Start!</p>
     </div>
+  </div>
+</div>
 
-    <div class="container">
-        <div class="input-group">
-            <input type="text" id="url" placeholder="Paste TikTok URL...">
-            <button id="startBtn" onclick="startBot()">Start</button>
-        </div>
-        <div id="status" class="status" style="display:none"></div>
-        <div id="log"></div>
+<script>
+const sessionElements = {};  // sid → {card, logBox, countdownBar, eventSource, lastLogCount}
+
+function startSession() {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url) return;
+
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Starting...';
+
+  fetch('/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({url}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) {
+      alert(data.error);
+      btn.disabled = false;
+      btn.textContent = '▶ Start Session';
+      return;
+    }
+    document.getElementById('urlInput').value = '';
+    btn.disabled = false;
+    btn.textContent = '▶ Start Session';
+    addSessionCard(data);
+    connectStream(data.id);
+  })
+  .catch(err => {
+    alert('Failed to start: ' + err);
+    btn.disabled = false;
+    btn.textContent = '▶ Start Session';
+  });
+}
+
+function addSessionCard(session) {
+  document.getElementById('emptyState')?.remove();
+
+  const card = document.createElement('div');
+  card.className = 'session-card';
+  card.id = `session-${session.id}`;
+
+  card.innerHTML = `
+    <div class="session-header" onclick="toggleSession(${session.id})">
+      <div class="session-info">
+        <span class="session-name">Session ${session.id}</span>
+        <span class="session-url" title="${escHtml(session.url)}">${escHtml(session.url)}</span>
+      </div>
+      <div class="session-stats">
+        <span class="stat">Views: <b id="views-${session.id}">0</b></span>
+        <span class="stat">Cycles: <b id="cycles-${session.id}">0</b></span>
+        <span class="status-badge status-${session.status}" id="status-${session.id}">${session.status}</span>
+        <span class="session-actions">
+          <button class="stop-btn" id="stopbtn-${session.id}" onclick="event.stopPropagation(); stopSession(${session.id})">■ Stop</button>
+        </span>
+      </div>
     </div>
+    <div class="session-detail" id="detail-${session.id}">
+      <div class="session-detail-inner">
+        <div class="countdown-bar" id="countdown-${session.id}"></div>
+        <div class="log-box" id="logs-${session.id}"></div>
+      </div>
+    </div>
+  `;
 
-    <script>
-        let totalViews = 0;
-        let cycleCount = 0;
-        let countdownInterval = null;
+  document.getElementById('sessionsContainer').appendChild(card);
 
-        function animateCounter(target) {
-            const el = document.getElementById('counterValue');
-            const start = parseInt(el.textContent) || 0;
-            const diff = target - start;
-            if (diff <= 0) { el.textContent = target; return; }
-            const steps = 30;
-            const stepTime = 600 / steps;
-            let current = start;
-            let i = 0;
-            const timer = setInterval(() => {
-                i++;
-                current = Math.round(start + (diff * (i / steps)));
-                el.textContent = current.toLocaleString();
-                if (i >= steps) {
-                    clearInterval(timer);
-                    el.textContent = target.toLocaleString();
-                    // Bump animation
-                    el.classList.add('bump');
-                    setTimeout(() => el.classList.remove('bump'), 200);
-                }
-            }, stepTime);
+  sessionElements[session.id] = {
+    card,
+    logBox: card.querySelector(`#logs-${session.id}`),
+    countdownBar: card.querySelector(`#countdown-${session.id}`),
+    lastLogCount: 0,
+  };
+
+  updateGlobalStats();
+}
+
+function toggleSession(sid) {
+  const detail = document.getElementById(`detail-${sid}`);
+  const card = document.getElementById(`session-${sid}`);
+  const isOpen = detail.classList.contains('open');
+
+  // Close all
+  document.querySelectorAll('.session-detail').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.session-card').forEach(c => c.classList.remove('active'));
+
+  if (!isOpen) {
+    detail.classList.add('open');
+    card.classList.add('active');
+    // Auto-scroll log to bottom
+    const logBox = document.getElementById(`logs-${sid}`);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+}
+
+function connectStream(sid) {
+  const es = new EventSource(`/stream/${sid}`);
+  if (sessionElements[sid]) sessionElements[sid].eventSource = es;
+
+  es.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      const el = sessionElements[sid];
+      if (!el) return;
+
+      if (msg.type === 'log') {
+        const line = document.createElement('div');
+        line.className = 'log-line';
+        line.textContent = msg.text;
+        el.logBox.appendChild(line);
+        // Auto-scroll if near bottom
+        if (el.logBox.scrollHeight - el.logBox.scrollTop - el.logBox.clientHeight < 100) {
+          el.logBox.scrollTop = el.logBox.scrollHeight;
         }
+      }
 
-        function startCountdown(seconds) {
-            clearInterval(countdownInterval);
-            const timerEl = document.getElementById('counterTimer');
-            timerEl.classList.remove('hidden');
-            let remaining = seconds;
-
-            function update() {
-                const m = Math.floor(remaining / 60);
-                const s = remaining % 60;
-                timerEl.textContent = '⏳ Next cycle in ' + (m > 0 ? m + 'm ' : '') + s + 's';
-                if (remaining <= 0) {
-                    clearInterval(countdownInterval);
-                    timerEl.classList.add('hidden');
-                }
-                remaining--;
-            }
-            update();
-            countdownInterval = setInterval(update, 1000);
+      else if (msg.type === 'countdown') {
+        if (msg.text) {
+          el.countdownBar.textContent = msg.text;
+          el.countdownBar.classList.add('visible');
+        } else {
+          el.countdownBar.classList.remove('visible');
         }
+      }
 
-        function startBot() {
-            const url = document.getElementById('url').value.trim();
-            if (!url) return alert('Enter a TikTok URL');
-
-            const btn = document.getElementById('startBtn');
-            btn.disabled = true;
-            btn.textContent = 'Running...';
-            document.getElementById('log').innerHTML = '';
-            document.getElementById('status').style.display = 'block';
-            document.getElementById('counterCycles').textContent = 'Starting...';
-            totalViews = 0;
-            cycleCount = 0;
-            document.getElementById('counterValue').textContent = '0';
-
-            fetch('/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url })
-            }).then(response => {
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-
-                function read() {
-                    reader.read().then(({ done, value }) => {
-                        if (done) {
-                            btn.disabled = false;
-                            btn.textContent = 'Start';
-                            clearInterval(countdownInterval);
-                            document.getElementById('counterTimer').classList.add('hidden');
-                            document.getElementById('counterCycles').textContent = 'Done — ' + cycleCount + ' cycle' + (cycleCount !== 1 ? 's' : '') + ' completed';
-                            return;
-                        }
-
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop();
-
-                        for (const line of lines) {
-                            if (!line.startsWith('data: ')) continue;
-                            const data = line.slice(6).trim();
-
-                            if (data === 'DONE') {
-                                btn.disabled = false;
-                                btn.textContent = 'Start';
-                                clearInterval(countdownInterval);
-                                document.getElementById('counterTimer').classList.add('hidden');
-                                document.getElementById('counterCycles').textContent = 'Done — ' + cycleCount + ' cycle' + (cycleCount !== 1 ? 's' : '') + ' completed';
-                                return;
-                            }
-
-                            const pipe = data.indexOf('|');
-                            if (pipe === -1) continue;
-
-                            const step = data.substring(0, pipe);
-                            const msg = data.substring(pipe + 1);
-                            const statusEl = document.getElementById('status');
-
-                            // Update status
-                            statusEl.textContent = msg;
-                            statusEl.className = 'status';
-                            if (msg.includes('✅')) statusEl.classList.add('success');
-                            else if (msg.includes('Error') || msg.includes('error')) statusEl.classList.add('error');
-                            else if (msg.includes('wait') || msg.includes('Rate') || msg.includes('⏳')) statusEl.classList.add('wait');
-
-                            // Track total views from "Total: X" in success messages
-                            const totalMatch = msg.match(/Total:\s*([\d,]+)/);
-                            if (totalMatch) {
-                                totalViews = parseInt(totalMatch[1].replace(/,/g, ''));
-                                animateCounter(totalViews);
-                            }
-
-                            // Track cycle count
-                            const cycleMatch = msg.match(/Cycle\s+(\d+)/);
-                            if (cycleMatch) {
-                                const c = parseInt(cycleMatch[1]);
-                                if (c > cycleCount) cycleCount = c;
-                                document.getElementById('counterCycles').textContent = 'Cycle ' + cycleCount + ' in progress';
-                            }
-
-                            // Live countdown from backend — show timer in counter box
-                            const countdownMatch = msg.match(/(\d+)m\s*(\d+)s\s*remaining/) || msg.match(/(\d+)s\s*remaining/);
-                            if (msg.includes('remaining')) {
-                                const timerEl = document.getElementById('counterTimer');
-                                timerEl.classList.remove('hidden');
-                                // Parse remaining time from message
-                                const mMatch = msg.match(/(\d+)m\s*(\d+)s/);
-                                const sMatch = msg.match(/(\d+)s\s*remaining/);
-                                if (mMatch) {
-                                    timerEl.textContent = '⏳ ' + mMatch[1] + 'm ' + mMatch[2] + 's remaining';
-                                } else if (sMatch) {
-                                    timerEl.textContent = '⏳ ' + sMatch[1] + 's remaining';
-                                }
-                            } else if (msg.includes('Rate limit done') || msg.includes('✅')) {
-                                document.getElementById('counterTimer').classList.add('hidden');
-                            }
-
-                            // Success message — update cycle text
-                            if (msg.includes('✅')) {
-                                document.getElementById('counterCycles').textContent = cycleCount + ' cycle' + (cycleCount !== 1 ? 's' : '') + ' completed';
-                            }
-
-                            // Add to log
-                            const logEl = document.getElementById('log');
-                            const entry = document.createElement('div');
-                            entry.className = 'log-entry';
-                            if (msg.includes('✅')) entry.classList.add('highlight');
-                            entry.textContent = msg;
-                            logEl.insertBefore(entry, logEl.firstChild);
-
-                            while (logEl.children.length > 50) {
-                                logEl.removeChild(logEl.lastChild);
-                            }
-                        }
-                        read();
-                    });
-                }
-                read();
-            }).catch(err => {
-                document.getElementById('status').textContent = 'Connection error: ' + err;
-                document.getElementById('status').className = 'status error';
-                btn.disabled = false;
-                btn.textContent = 'Start';
-            });
+      else if (msg.type === 'stats') {
+        document.getElementById(`views-${sid}`).textContent = msg.views.toLocaleString();
+        document.getElementById(`cycles-${sid}`).textContent = msg.cycles;
+        const statusEl = document.getElementById(`status-${sid}`);
+        statusEl.textContent = msg.status;
+        statusEl.className = `status-badge status-${msg.status}`;
+        if (msg.status === 'stopped' || msg.status === 'error') {
+          document.getElementById(`stopbtn-${sid}`).style.display = 'none';
         }
+        updateGlobalStats();
+      }
 
-        document.getElementById('url').addEventListener('keydown', e => {
-            if (e.key === 'Enter') startBot();
+      else if (msg.type === 'ended') {
+        es.close();
+        el.countdownBar.classList.remove('visible');
+      }
+    } catch(e) {}
+  };
+
+  es.onerror = () => {
+    // Will auto-reconnect via EventSource
+  };
+}
+
+function stopSession(sid) {
+  fetch(`/stop/${sid}`, {method: 'POST'})
+    .then(r => r.json())
+    .then(() => {
+      const statusEl = document.getElementById(`status-${sid}`);
+      statusEl.textContent = 'stopping';
+      statusEl.className = 'status-badge status-stopping';
+    });
+}
+
+function updateGlobalStats() {
+  const cards = document.querySelectorAll('.session-card');
+  document.getElementById('globalSessions').textContent = cards.length;
+
+  let totalViews = 0;
+  cards.forEach(card => {
+    const sid = card.id.replace('session-', '');
+    const viewsEl = document.getElementById(`views-${sid}`);
+    if (viewsEl) totalViews += parseInt(viewsEl.textContent.replace(/,/g, '')) || 0;
+  });
+  document.getElementById('globalViews').textContent = totalViews.toLocaleString();
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── On page load: restore existing sessions ──
+window.addEventListener('load', () => {
+  fetch('/sessions')
+    .then(r => r.json())
+    .then(sessions => {
+      if (sessions.length > 0) {
+        sessions.forEach(s => {
+          addSessionCard(s);
+          // Update stats from saved state
+          document.getElementById(`views-${s.id}`).textContent = s.views.toLocaleString();
+          document.getElementById(`cycles-${s.id}`).textContent = s.cycles;
+          const statusEl = document.getElementById(`status-${s.id}`);
+          statusEl.textContent = s.status;
+          statusEl.className = `status-badge status-${s.status}`;
+          if (s.status === 'stopped' || s.status === 'error') {
+            document.getElementById(`stopbtn-${s.id}`).style.display = 'none';
+          }
+          // Reconnect stream for active sessions
+          if (s.status === 'running' || s.status === 'starting') {
+            connectStream(s.id);
+          }
         });
-    </script>
+      }
+    });
+});
+
+// Enter key to start
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && document.activeElement.id === 'urlInput') {
+    startSession();
+  }
+});
+</script>
 </body>
 </html>
