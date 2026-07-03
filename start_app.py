@@ -29,6 +29,9 @@ os.system("chmod 700 /var/lib/tor 2>/dev/null || true")
 with open("/tmp/torrc", "w") as f:
     for i in range(10):
         f.write(f"SocksPort 9{50+i:03d} SessionGroup={i}\n")
+    f.write("ControlPort 9060\n")
+    f.write("CookieAuthentication 1\n")
+    f.write("CookieAuthFile /tmp/tor-data/control_auth_cookie\n")
     f.write("DataDirectory /tmp/tor-data\n")
     f.write("RunAsDaemon 0\n")
 
