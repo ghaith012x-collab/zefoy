@@ -23,4 +23,4 @@ COPY . .
 
 EXPOSE 5000
 
-CMD tor -f /etc/tor/torrc & sleep 3 && python app.py
+CMD ["python", "start_app.py"]
