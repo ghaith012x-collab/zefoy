@@ -28,17 +28,24 @@ def parse_timer_seconds(text):
 
 def run_bot(tiktok_url, q):
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+        )
         page = browser.new_page(
             viewport={"width": 390, "height": 844},
             user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         )
+        # Hide webdriver flag
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         try:
             # ── STEP 1: Load zefoy.com ──
             emit(q, 1, "Loading zefoy.com...")
-            page.goto(ZEFOY, wait_until="networkidle", timeout=30000)
-            time.sleep(3)
+            page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
+            # Wait for the page body to be meaningful
+            page.wait_for_selector("body", timeout=15000)
+            time.sleep(5)
 
             # ── STEP 2: Captcha check ──
             emit(q, 2, "Checking for captcha...")
