@@ -137,56 +137,120 @@ def remove_small_components(binary_arr, min_size=30):
 
 def solve_captcha(img_bytes):
     import pytesseract
+    from PIL import ImageFilter, ImageEnhance
     img = Image.open(BytesIO(img_bytes))
     if img.mode != 'RGB':
         img = img.convert('RGB')
     gray = ImageOps.grayscale(img)
     w, h = gray.size
-    big = gray.resize((w * 3, h * 3), Image.LANCZOS)
+    # Upscale 4x for better OCR accuracy
+    big = gray.resize((w * 4, h * 4), Image.LANCZOS)
     arr = np.array(big)
 
     results = []
 
-    # Strategy 1: Direct threshold
-    for thresh_val in [120, 140, 160, 180]:
-        binary_img = Image.fromarray(((arr >= thresh_val) * 255).astype('uint8'))
-        for psm in [7, 6]:
+    def run_ocr(pil_img, tag=""):
+        """Run tesseract with multiple PSM modes and collect results."""
+        found = []
+        for psm in [7, 8, 13, 6]:
             config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyz'
             try:
-                text = pytesseract.image_to_string(binary_img, config=config).strip()
+                text = pytesseract.image_to_string(pil_img, config=config).strip()
                 text = re.sub(r'[^a-z]', '', text.lower())
-                if len(text) >= 2:
-                    results.append(text)
+                if 3 <= len(text) <= 12:
+                    found.append(text)
             except Exception as ocr_err:
-                print(f"[BOT] OCR strategy-1 error (thresh={thresh_val}, psm={psm}): {ocr_err}", flush=True)
+                print(f"[BOT] OCR {tag} psm={psm} error: {ocr_err}", flush=True)
+        return found
 
-    # Strategy 2: Dot removal
-    for thresh_val in [130, 150]:
+    # Strategy 1: Direct thresholds (dark text on light bg)
+    for thresh_val in [100, 120, 140, 160, 180, 200]:
+        binary_img = Image.fromarray(((arr >= thresh_val) * 255).astype('uint8'))
+        results.extend(run_ocr(binary_img, f"thresh-{thresh_val}"))
+
+    # Strategy 2: Inverted thresholds (light text on dark bg)
+    for thresh_val in [100, 130, 160]:
+        binary_img = Image.fromarray(((arr < thresh_val) * 255).astype('uint8'))
+        results.extend(run_ocr(binary_img, f"inv-{thresh_val}"))
+
+    # Strategy 3: Dot/noise removal + threshold
+    for thresh_val in [110, 130, 150, 170]:
         binary = (arr < thresh_val).astype(np.uint8)
-        cleaned = remove_small_components(binary, min_size=30)
+        cleaned = remove_small_components(binary, min_size=25)
         clean_img = Image.fromarray(((1 - cleaned) * 255).astype('uint8'))
-        for psm in [7, 6]:
-            config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyz'
-            try:
-                text = pytesseract.image_to_string(clean_img, config=config).strip()
-                text = re.sub(r'[^a-z]', '', text.lower())
-                if len(text) >= 2:
-                    results.append(text)
-            except Exception as ocr_err:
-                print(f"[BOT] OCR strategy-2 error (thresh={thresh_val}, psm={psm}): {ocr_err}", flush=True)
+        results.extend(run_ocr(clean_img, f"clean-{thresh_val}"))
+
+    # Strategy 4: Contrast enhancement + threshold
+    try:
+        enhanced = ImageEnhance.Contrast(big).enhance(3.0)
+        enhanced_arr = np.array(enhanced)
+        for thresh_val in [120, 150, 180]:
+            binary_img = Image.fromarray(((enhanced_arr >= thresh_val) * 255).astype('uint8'))
+            results.extend(run_ocr(binary_img, f"contrast-{thresh_val}"))
+    except:
+        pass
+
+    # Strategy 5: Median filter (removes salt-and-pepper noise) + threshold
+    try:
+        median = big.filter(ImageFilter.MedianFilter(size=3))
+        median_arr = np.array(median)
+        for thresh_val in [120, 150]:
+            binary_img = Image.fromarray(((median_arr >= thresh_val) * 255).astype('uint8'))
+            results.extend(run_ocr(binary_img, f"median-{thresh_val}"))
+    except:
+        pass
+
+    # Strategy 6: Morphological closing (fills gaps in characters)
+    try:
+        for thresh_val in [130, 160]:
+            binary = (arr < thresh_val).astype(np.uint8)
+            cleaned = remove_small_components(binary, min_size=20)
+            # Dilate then erode (close operation) to connect broken strokes
+            from PIL import ImageFilter
+            tmp_img = Image.fromarray((cleaned * 255).astype('uint8'))
+            tmp_img = tmp_img.filter(ImageFilter.MaxFilter(3))  # dilate
+            tmp_img = tmp_img.filter(ImageFilter.MinFilter(3))  # erode
+            inv_img = ImageOps.invert(tmp_img)
+            results.extend(run_ocr(inv_img, f"morph-{thresh_val}"))
+    except:
+        pass
 
     print(f"[BOT] OCR candidates: {results}", flush=True)
     if not results:
         return ""
 
-    most_common = Counter(results).most_common(1)[0][0]
-
+    # Score candidates using dictionary matching
     if WORD_LIST:
-        matches = difflib.get_close_matches(most_common, WORD_LIST, n=3, cutoff=0.5)
-        print(f"[BOT] OCR: '{most_common}' → dictionary: {matches}", flush=True)
-        if matches:
-            return matches[0]
+        word_set = set(WORD_LIST)
+        # First: check if any candidate is an exact dictionary word
+        exact_matches = [r for r in results if r in word_set]
+        if exact_matches:
+            best = Counter(exact_matches).most_common(1)[0][0]
+            print(f"[BOT] OCR exact match: '{best}' (count={Counter(exact_matches)[best]})", flush=True)
+            return best
 
+        # Second: fuzzy match each unique candidate and pick the best
+        best_match = None
+        best_score = 0
+        best_raw = ""
+        for candidate in set(results):
+            freq = results.count(candidate)
+            matches = difflib.get_close_matches(candidate, WORD_LIST, n=1, cutoff=0.6)
+            if matches:
+                # Score = frequency × similarity
+                sim = difflib.SequenceMatcher(None, candidate, matches[0]).ratio()
+                score = freq * sim
+                if score > best_score:
+                    best_score = score
+                    best_match = matches[0]
+                    best_raw = candidate
+        if best_match:
+            print(f"[BOT] OCR: '{best_raw}' → '{best_match}' (score={best_score:.2f})", flush=True)
+            return best_match
+
+    # Fallback: most common raw OCR result
+    most_common = Counter(results).most_common(1)[0][0]
+    print(f"[BOT] OCR fallback (no dict match): '{most_common}'", flush=True)
     return most_common
 
 
@@ -482,6 +546,9 @@ def run_tab(session, tab_id):
 
                 # ── Main loop ──
                 zero_streak = 0  # consecutive cycles returning 0
+                no_response_streak = 0  # consecutive "no response" cycles
+                MAX_NO_RESPONSE = 5  # reload page after this many
+                MAX_ZERO_STREAK = 10  # stop tab after this many 0-count results
                 while not session.stop_event.is_set():
                     cycle = session.add_cycle()
                     session.log(f"🔄 Cycle {cycle}")
@@ -593,6 +660,7 @@ def run_tab(session, tab_id):
                         state_type = page_state.get('type', 'waiting') if page_state else 'waiting'
 
                         if state_type == 'ratelimit':
+                            no_response_streak = 0  # page is alive
                             timer_text = page_state.get('text', '')
                             wait_secs = parse_wait_time(timer_text)
                             if wait_secs <= 0:
@@ -628,10 +696,15 @@ def run_tab(session, tab_id):
                             new_total = session.add_count(count)
                             if count > 0:
                                 zero_streak = 0
+                                no_response_streak = 0
                                 session.log(f"🎉 +{count} {unit}! Total: {new_total:,}")
                             else:
                                 zero_streak += 1
-                                session.log(f"⚠️ Zefoy returned 0 {unit} (streak: {zero_streak}) — retrying...")
+                                no_response_streak = 0
+                                if zero_streak >= MAX_ZERO_STREAK:
+                                    session.log(f"🔴 {zero_streak} consecutive 0 {unit} — Zefoy may be blocking. Stopping tab.")
+                                    return
+                                session.log(f"⚠️ Zefoy returned 0 {unit} (streak: {zero_streak}/{MAX_ZERO_STREAK}) — retrying...")
                             break
 
                         elif state_type == 'bar':
@@ -676,10 +749,15 @@ def run_tab(session, tab_id):
 
                             if count > 0:
                                 zero_streak = 0
+                                no_response_streak = 0
                                 session.log(f"🎉 +{count} {unit}! Total: {new_total:,}")
                             else:
                                 zero_streak += 1
-                                session.log(f"⚠️ Zefoy returned 0 {unit} (streak: {zero_streak}) — retrying...")
+                                no_response_streak = 0
+                                if zero_streak >= MAX_ZERO_STREAK:
+                                    session.log(f"🔴 {zero_streak} consecutive 0 {unit} — Zefoy may be blocking. Stopping tab.")
+                                    return
+                                session.log(f"⚠️ Zefoy returned 0 {unit} (streak: {zero_streak}/{MAX_ZERO_STREAK}) — retrying...")
                             break
 
                         elif state_type == 'loading':
@@ -691,7 +769,27 @@ def run_tab(session, tab_id):
                                 time.sleep(1)
                                 continue
                             else:
-                                session.log("⚠️ No response, retrying...")
+                                no_response_streak += 1
+                                if no_response_streak >= MAX_NO_RESPONSE:
+                                    session.log(f"🔴 {no_response_streak} consecutive no-responses — reloading page...")
+                                    no_response_streak = 0
+                                    try:
+                                        page.reload(wait_until="domcontentloaded")
+                                        time.sleep(5)
+                                        # Re-check for service button
+                                        try:
+                                            page.locator(f".{btn_cls}").wait_for(timeout=10000)
+                                            page.locator(f".{btn_cls}").click()
+                                            time.sleep(2)
+                                            session.log(f"✅ {svc_name} panel re-opened after reload")
+                                        except:
+                                            session.log(f"❌ {svc_name} button not found after reload. Stopping tab.")
+                                            return
+                                    except Exception as reload_err:
+                                        session.log(f"❌ Page reload failed: {reload_err}. Stopping tab.")
+                                        return
+                                else:
+                                    session.log(f"⚠️ No response, retrying... ({no_response_streak}/{MAX_NO_RESPONSE})")
                                 break
 
                     time.sleep(3)
