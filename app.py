@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
-import os, time, json, queue, threading
+import os, time, json, queue, threading, re
 
 app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
@@ -13,6 +13,19 @@ def emit(q, step, message, done=False, inspect=None):
         payload["inspect"] = inspect
     q.put(json.dumps(payload) + "\n")
 
+def parse_timer_seconds(text):
+    """Extract wait seconds from timer text like 'Please wait 2 minutes 30 seconds'."""
+    minutes = 0
+    seconds = 0
+    m = re.search(r'(\d+)\s*minute', text, re.IGNORECASE)
+    if m:
+        minutes = int(m.group(1))
+    s = re.search(r'(\d+)\s*second', text, re.IGNORECASE)
+    if s:
+        seconds = int(s.group(1))
+    total = minutes * 60 + seconds
+    return total if total > 0 else 60  # default 60s if can't parse
+
 def run_bot(tiktok_url, q):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -22,11 +35,12 @@ def run_bot(tiktok_url, q):
         )
 
         try:
+            # ── STEP 1: Load zefoy.com ──
             emit(q, 1, "Loading zefoy.com...")
             page.goto(ZEFOY, wait_until="networkidle", timeout=30000)
             time.sleep(3)
 
-            # Captcha check
+            # ── STEP 2: Captcha check ──
             emit(q, 2, "Checking for captcha...")
             captcha_present = False
             try:
@@ -70,21 +84,45 @@ def run_bot(tiktok_url, q):
                         continue
                 time.sleep(4)
 
-            # CLICK VIEWS ARROW
+            # ── STEP 7: Click the Views arrow button ──
             emit(q, 7, "Clicking Views arrow button...")
             views_clicked = False
-            
+
+            # The arrow buttons are <a> tags inside each service row.
+            # Strategy: find the card/row containing "Views" text, then click the arrow button inside it.
             try:
-                views_el = page.locator("text=Views").first
-                box = views_el.bounding_box()
-                if box:
-                    x = box["x"] + box["width"] / 2
-                    y = box["y"] + box["height"] + 30
-                    page.mouse.click(x, y)
-                    views_clicked = True
-                    emit(q, 8, "Clicked Views arrow")
+                # Look for all the service rows and find the one with "Views"
+                rows = page.locator(".row, .col, .card, div").all()
+                for row in rows:
+                    try:
+                        txt = row.inner_text(timeout=1000)
+                        if "Views" in txt and "Comment" not in txt:
+                            # Find the arrow button inside
+                            arrow = row.locator("a, button").first
+                            if arrow.is_visible(timeout=2000):
+                                arrow.click()
+                                views_clicked = True
+                                emit(q, 8, "Clicked Views arrow")
+                                break
+                    except:
+                        continue
             except Exception as e:
-                emit(q, 7, f"Failed: {str(e)[:60]}")
+                emit(q, 7, f"Row scan failed: {str(e)[:60]}")
+
+            # Fallback: use coordinate approach
+            if not views_clicked:
+                try:
+                    views_el = page.locator("text=Views").first
+                    box = views_el.bounding_box()
+                    if box:
+                        # Click the arrow button below the "Views" text
+                        x = box["x"] + box["width"] / 2
+                        y = box["y"] + box["height"] + 30
+                        page.mouse.click(x, y)
+                        views_clicked = True
+                        emit(q, 8, "Clicked Views arrow (coordinate)")
+                except Exception as e:
+                    emit(q, 7, f"Coordinate click failed: {str(e)[:60]}")
 
             if not views_clicked:
                 emit(q, 99, "Failed to click Views", done=True)
@@ -93,35 +131,36 @@ def run_bot(tiktok_url, q):
 
             time.sleep(3)
 
-            # FILL URL
-            emit(q, 9, "Looking for URL input...")
-            for sel in ["input[placeholder*='Enter Video URL']", "input[placeholder*='Video URL']", "input[placeholder*='URL']", "input[type='text']", "input"]:
-                try:
-                    inp = page.locator(sel).first
-                    if inp.is_visible(timeout=5000):
-                        inp.fill(tiktok_url)
-                        emit(q, 10, f"Link pasted: {tiktok_url[:40]}...")
-                        break
-                except:
-                    continue
-            else:
-                emit(q, 99, "No URL input found", done=True)
-                browser.close()
-                return
-
-            # GET INPUT POSITION FOR "UNDER" DETECTION
-            inp = page.locator("input[placeholder*='Enter Video URL'], input[placeholder*='Video URL'], input[placeholder*='URL'], input[type='text']").first
-            inp_box = inp.bounding_box()
-            input_bottom_y = inp_box["y"] + inp_box["height"] if inp_box else 200
-
-            # MAIN LOOP: Click Search → Check for bar → Retry on rate limit
-            max_cycles = 20
+            # ── MAIN LOOP ──
+            total_views_sent = 0
+            max_cycles = 50
             for cycle in range(1, max_cycles + 1):
-                emit(q, 11, f"Cycle {cycle}: Clicking Search...")
 
-                # CLICK SEARCH
+                # ── STEP 9: Ensure URL is filled ──
+                emit(q, 9, f"Cycle {cycle}: Filling URL...")
+                url_filled = False
+                for sel in ["input[placeholder*='Enter Video URL']", "input[placeholder*='Video URL']", "input[placeholder*='URL']", "input[type='text']"]:
+                    try:
+                        inp = page.locator(sel).first
+                        if inp.is_visible(timeout=5000):
+                            inp.fill("")
+                            time.sleep(0.3)
+                            inp.fill(tiktok_url)
+                            url_filled = True
+                            emit(q, 10, f"Link pasted: {tiktok_url[:40]}...")
+                            break
+                    except:
+                        continue
+
+                if not url_filled:
+                    emit(q, 99, "No URL input found", done=True)
+                    browser.close()
+                    return
+
+                # ── STEP 11: Click Search ──
+                emit(q, 11, f"Cycle {cycle}: Clicking Search...")
                 search_clicked = False
-                for sel in ["button:has-text('Search')", "input[type='submit']"]:
+                for sel in ["button:has-text('Search')", "input[type='submit']", "button.btn-primary"]:
                     try:
                         btn = page.locator(sel).first
                         if btn.is_visible(timeout=3000):
@@ -133,10 +172,9 @@ def run_bot(tiktok_url, q):
                         continue
 
                 if not search_clicked:
-                    # Fallback: find blue button next to input
+                    # Fallback: find any button with search-like text
                     try:
-                        btn = page.locator("button").all()
-                        for b in btn:
+                        for b in page.locator("button").all():
                             if b.is_visible(timeout=1000):
                                 txt = b.inner_text(timeout=500).strip()
                                 if "search" in txt.lower() or "🔍" in txt:
@@ -152,164 +190,174 @@ def run_bot(tiktok_url, q):
                     browser.close()
                     return
 
-                time.sleep(6)
+                time.sleep(5)
 
-                # CHECK FOR "TOO MANY REQUESTS"
-                too_many = False
+                # ── STEP 13: Check for rate limit / timer ──
+                rate_limited = False
                 try:
-                    tm = page.locator("text=Too many requests").first
-                    if tm.is_visible(timeout=3000):
-                        too_many = True
-                        emit(q, 13, "Rate limited — clicking Search again...")
-                        time.sleep(3)
+                    # Look for timer or "Too many" or "Please wait" text
+                    body_text = page.locator("body").inner_text(timeout=3000)
+
+                    if "Too many requests" in body_text or "Please wait" in body_text or "too many" in body_text.lower():
+                        rate_limited = True
+                        wait_secs = parse_timer_seconds(body_text)
+                        # Cap at 10 minutes max
+                        wait_secs = min(wait_secs, 600)
+                        emit(q, 13, f"Rate limited — waiting {wait_secs}s...")
+                        time.sleep(wait_secs + 5)  # add 5s buffer
                         continue
                 except:
                     pass
 
-                # FIND AND CLICK ELEMENT DIRECTLY UNDER INPUT (within ~120px / 3-4cm)
-                emit(q, 14, "Looking for bar under input...")
-                
+                # ── STEP 14: Find and click the dark bar (video info bar) ──
+                emit(q, 14, "Looking for video bar...")
                 bar_clicked = False
+
+                # The bar shows something like "🎬 354" - it's a dark element with digits
+                # Strategy: find clickable elements below the input that contain digits
                 try:
-                    # Use elementFromPoint at position directly under input
-                    check_x = int(inp_box["x"] + inp_box["width"] / 2) if inp_box else 195
-                    check_y = int(input_bottom_y + 50)  # ~50px below input = ~1.5cm
-                    
-                    el_info = page.evaluate("""(coords) => {
-                        const el = document.elementFromPoint(coords.x, coords.y);
-                        if (!el) return null;
-                        let curr = el;
-                        while (curr && curr.tagName !== 'BODY') {
-                            if (curr.tagName === 'BUTTON' || curr.tagName === 'A' || curr.tagName === 'DIV') {
-                                return {
-                                    tag: curr.tagName,
-                                    text: curr.innerText ? curr.innerText.trim().slice(0,50) : '',
-                                    class: curr.className,
-                                    y: curr.getBoundingClientRect().top
-                                };
-                            }
-                            curr = curr.parentElement;
-                        }
-                        return {tag: el.tagName, text: el.innerText ? el.innerText.trim().slice(0,50) : '', class: el.className};
-                    }""", {"x": check_x, "y": check_y})
-                    
-                    emit(q, 14, f"Found under input: {el_info}")
+                    inp = page.locator("input[placeholder*='Enter Video URL'], input[placeholder*='Video URL'], input[placeholder*='URL'], input[type='text']").first
+                    inp_box = inp.bounding_box()
+                    input_bottom_y = inp_box["y"] + inp_box["height"] if inp_box else 200
 
-                    # Click the element at that position
-                    if el_info and el_info.get("text") and "important" not in el_info["text"].lower() and "notice" not in el_info["text"].lower():
-                        page.mouse.click(check_x, check_y)
-                        bar_clicked = True
-                        emit(q, 15, f"Clicked bar: '{el_info.get('text', '')[:20]}'")
-                except Exception as e:
-                    emit(q, 14, f"Point check failed: {str(e)[:60]}")
-
-                # Fallback: scan all visible elements, find one within 120px below input
-                if not bar_clicked:
-                    try:
-                        all_els = page.locator("button, div, a").all()
-                        for el in all_els:
-                            try:
-                                box = el.bounding_box()
-                                if not box:
-                                    continue
-                                # Must be within 120px below input bottom
-                                dist_below = box["y"] - input_bottom_y
-                                if 10 < dist_below < 120 and box["height"] > 30 and el.is_visible(timeout=1000):
-                                    txt = el.inner_text(timeout=500).strip()
-                                    if not txt:
-                                        continue
-                                    # Skip notices
-                                    if "important" in txt.lower() or "notice" in txt.lower() or "official" in txt.lower():
-                                        continue
-                                    # Must have digits (view count) or be dark colored
-                                    has_digits = any(c.isdigit() for c in txt)
-                                    bg = el.evaluate("e => getComputedStyle(e).backgroundColor")
-                                    is_dark = "rgb(0" in bg or "rgb(3" in bg or "rgb(4" in bg or "rgb(5" in bg or "rgb(6" in bg
-                                    
-                                    if has_digits or is_dark:
-                                        el.click()
-                                        bar_clicked = True
-                                        emit(q, 15, f"Clicked bar (scan): '{txt[:20]}'")
-                                        break
-                            except:
+                    # Look for elements below the input
+                    candidates = page.locator("div, button, a, span").all()
+                    for el in candidates:
+                        try:
+                            box = el.bounding_box()
+                            if not box:
                                 continue
-                    except:
-                        pass
+                            # Must be below the input, within ~150px
+                            dist_below = box["y"] - input_bottom_y
+                            if dist_below < 5 or dist_below > 150:
+                                continue
+                            if box["height"] < 25 or box["width"] < 100:
+                                continue
+                            if not el.is_visible(timeout=500):
+                                continue
+
+                            txt = el.inner_text(timeout=500).strip()
+                            if not txt:
+                                continue
+                            # Skip navigation/notice text
+                            if any(skip in txt.lower() for skip in ["important", "notice", "official", "join", "youtube", "telegram", "home", "zefoy"]):
+                                continue
+
+                            # The bar typically has digits (view count)
+                            has_digits = any(c.isdigit() for c in txt)
+                            if has_digits:
+                                el.click()
+                                bar_clicked = True
+                                emit(q, 15, f"Clicked bar: '{txt[:30]}'")
+                                break
+                        except:
+                            continue
+                except Exception as e:
+                    emit(q, 14, f"Bar scan error: {str(e)[:60]}")
+
+                # Fallback: click by coordinate below input
+                if not bar_clicked:
+                    try:
+                        inp_box = inp.bounding_box() if inp else None
+                        if inp_box:
+                            check_x = int(inp_box["x"] + inp_box["width"] / 2)
+                            check_y = int(inp_box["y"] + inp_box["height"] + 50)
+
+                            el_info = page.evaluate("""(coords) => {
+                                const el = document.elementFromPoint(coords.x, coords.y);
+                                if (!el) return null;
+                                const text = el.innerText ? el.innerText.trim().slice(0,50) : '';
+                                if (text && /\d/.test(text)) return {text: text, tag: el.tagName};
+                                // Check parent
+                                const p = el.parentElement;
+                                if (p) {
+                                    const pt = p.innerText ? p.innerText.trim().slice(0,50) : '';
+                                    if (pt && /\d/.test(pt)) return {text: pt, tag: p.tagName};
+                                }
+                                return null;
+                            }""", {"x": check_x, "y": check_y})
+
+                            if el_info:
+                                page.mouse.click(check_x, check_y)
+                                bar_clicked = True
+                                emit(q, 15, f"Clicked bar (coord): '{el_info.get('text', '')[:20]}'")
+                    except Exception as e:
+                        emit(q, 14, f"Coord fallback failed: {str(e)[:60]}")
 
                 if not bar_clicked:
-                    emit(q, 16, "No bar found — checking if done...")
-                    # Maybe success already?
+                    # Maybe already processing or rate limited — check page state
                     try:
-                        success = page.locator("text=Successfully").first
-                        if success.is_visible(timeout=2000):
-                            msg = success.inner_text(timeout=3000)
-                            emit(q, 17, msg, done=True)
-                            browser.close()
-                            return
+                        body_text = page.locator("body").inner_text(timeout=2000)
+                        if "Successfully" in body_text:
+                            match = re.search(r'Successfully\s+(\d+)\s+views?\s+sent', body_text, re.IGNORECASE)
+                            count = match.group(1) if match else "?"
+                            total_views_sent += int(count) if count.isdigit() else 0
+                            emit(q, 17, f"✅ {count} views sent! (Total: {total_views_sent})")
+                            time.sleep(3)
+                            continue
+                        if "Too many" in body_text or "Please wait" in body_text:
+                            wait_secs = parse_timer_seconds(body_text)
+                            wait_secs = min(wait_secs, 600)
+                            emit(q, 13, f"Rate limited — waiting {wait_secs}s...")
+                            time.sleep(wait_secs + 5)
+                            continue
                     except:
                         pass
-                    
-                    # If rate limit, loop continues
-                    if too_many:
-                        continue
-                    
-                    emit(q, 99, "No bar appeared", done=True)
-                    browser.close()
-                    return
 
-                # WAIT FOR RESULT AFTER CLICKING BAR
+                    emit(q, 16, "No bar found — retrying cycle...")
+                    time.sleep(5)
+                    continue
+
+                # ── STEP 16: Wait for result after clicking bar ──
                 emit(q, 16, "Waiting for result...")
+
+                # Poll for up to 60 seconds for a result
+                result_found = False
+                for _ in range(30):  # 30 x 2s = 60s max
+                    time.sleep(2)
+                    try:
+                        body_text = page.locator("body").inner_text(timeout=3000)
+
+                        # Check for success
+                        if "Successfully" in body_text:
+                            match = re.search(r'Successfully\s+(\d+)\s+views?\s+sent', body_text, re.IGNORECASE)
+                            count = match.group(1) if match else "?"
+                            total_views_sent += int(count) if count.isdigit() else 0
+                            emit(q, 17, f"✅ {count} views sent! (Total: {total_views_sent})")
+                            result_found = True
+                            break
+
+                        # Check for timer (still processing)
+                        if "Checking Timer" in body_text:
+                            emit(q, 16, "Checking Timer... please wait")
+                            continue
+
+                        # Check for rate limit
+                        if "Too many requests" in body_text or "Please wait" in body_text:
+                            wait_secs = parse_timer_seconds(body_text)
+                            wait_secs = min(wait_secs, 600)
+                            emit(q, 13, f"Rate limited — waiting {wait_secs}s...")
+                            time.sleep(wait_secs + 5)
+                            result_found = True  # break inner, continue outer
+                            break
+                    except:
+                        continue
+
+                    # Check for spinner
+                    try:
+                        spinner = page.locator(".spinner, [class*='spinner'], [class*='loading']").first
+                        if spinner.is_visible(timeout=500):
+                            continue  # still loading
+                    except:
+                        pass
+
+                if not result_found:
+                    emit(q, 16, "No result after 60s — continuing to next cycle...")
+
+                # Brief pause before next cycle
                 time.sleep(3)
 
-                # Check success
-                try:
-                    success = page.locator("text=Successfully").first
-                    if success.is_visible(timeout=20000):
-                        msg = success.inner_text(timeout=5000)
-                        emit(q, 17, msg, done=True)
-                        browser.close()
-                        return
-                except:
-                    pass
-
-                # Check "Checking Timer"
-                try:
-                    timer = page.locator("text=Checking Timer").first
-                    if timer.is_visible(timeout=5000):
-                        emit(q, 16, "Checking Timer...")
-                        time.sleep(20)
-                        try:
-                            ready = page.locator("text=READY").first
-                            if ready.is_visible(timeout=5000):
-                                msg = ready.inner_text(timeout=3000)
-                                emit(q, 17, f"Timer ready: {msg}", done=True)
-                                browser.close()
-                                return
-                        except:
-                            pass
-                except:
-                    pass
-
-                # Check rate limit after bar click
-                try:
-                    tm = page.locator("text=Too many requests").first
-                    if tm.is_visible(timeout=2000):
-                        emit(q, 13, "Rate limited after bar click — retrying...")
-                        time.sleep(3)
-                        continue
-                except:
-                    pass
-
-                # Spinner wait
-                try:
-                    spinner = page.locator(".spinner, [class*='spinner']").first
-                    if spinner.is_visible(timeout=2000):
-                        emit(q, 16, "Spinner active, waiting 10s...")
-                        time.sleep(10)
-                except:
-                    pass
-
-            emit(q, 99, "Max cycles", done=True)
+            emit(q, 18, f"🏁 Finished {max_cycles} cycles. Total views sent: {total_views_sent}", done=True)
 
         except Exception as e:
             emit(q, 99, f"Error: {str(e)}", done=True)
@@ -336,7 +384,7 @@ def stream():
     def generate():
         while True:
             try:
-                msg = q.get(timeout=300)
+                msg = q.get(timeout=600)  # 10 min timeout (longer for rate limits)
                 yield f"data: {msg}\n\n"
                 data = json.loads(msg.strip())
                 if data.get("done"):

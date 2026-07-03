@@ -42,24 +42,47 @@
             transition: all 0.2s;
         }
         input:focus { border-color: #00d4ff; background: #1a1a1a; }
+
+        .btn-row { display: flex; gap: 10px; }
         button {
-            width: 100%;
+            flex: 1;
             padding: 16px;
             border: none;
             border-radius: 14px;
-            background: linear-gradient(90deg, #00d4ff, #a855f7);
             color: #fff;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
         }
+        #go {
+            background: linear-gradient(90deg, #00d4ff, #a855f7);
+        }
+        #stop {
+            background: #333;
+            display: none;
+            flex: 0 0 auto;
+            padding: 16px 24px;
+        }
+        #stop:hover { background: #ff4444; }
         button:hover { opacity: 0.9; }
         button:active { transform: scale(0.98); }
         button:disabled { opacity: 0.4; cursor: not-allowed; }
 
+        .stats {
+            margin-top: 16px;
+            display: none;
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 14px;
+            padding: 16px 20px;
+            text-align: center;
+        }
+        .stats-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #555; }
+        .stats-value { font-size: 32px; font-weight: 700; color: #00ff64; margin-top: 4px; }
+
         .log-container {
-            margin-top: 24px;
+            margin-top: 16px;
             background: #111;
             border: 1px solid #222;
             border-radius: 16px;
@@ -102,29 +125,8 @@
         .log-entry.success .log-step { background: rgba(0,255,100,0.15); color: #00ff64; }
         .log-entry.error .log-step { background: rgba(255,0,0,0.15); color: #ff4444; }
         .log-entry.active .log-step { background: rgba(0,212,255,0.15); color: #00d4ff; }
+        .log-entry.wait .log-step { background: rgba(255,165,0,0.15); color: #ffa500; }
         .log-msg { flex: 1; line-height: 1.5; word-break: break-word; }
-        
-        .inspect-box {
-            margin-top: 8px;
-            padding: 12px;
-            background: #0a0a0a;
-            border: 1px solid #2a2a2a;
-            border-radius: 10px;
-            font-family: 'SF Mono', Monaco, monospace;
-            font-size: 11px;
-            color: #888;
-            max-height: 200px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-            word-break: break-all;
-        }
-        .inspect-label {
-            color: #555;
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 6px;
-        }
 
         @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
     </style>
@@ -132,9 +134,16 @@
 <body>
     <div class="container">
         <h1>Zefoy Auto</h1>
-        <p class="subtitle">Paste link. Watch it work live.</p>
+        <p class="subtitle">Paste link. Watch it work live. Loops automatically.</p>
         <input type="text" id="url" placeholder="https://vm.tiktok.com/..." autocomplete="off">
-        <button id="go" onclick="start()">Confirm & Send Views</button>
+        <div class="btn-row">
+            <button id="go" onclick="start()">Confirm & Send Views</button>
+        </div>
+
+        <div id="stats" class="stats">
+            <div class="stats-label">Total Views Sent</div>
+            <div id="stats-value" class="stats-value">0</div>
+        </div>
 
         <div id="logs" class="log-container hidden">
             <div class="log-title">Live Activity</div>
@@ -143,36 +152,30 @@
     </div>
 
     <script>
-        function addLog(step, msg, type='normal', inspect=null) {
+        let totalViews = 0;
+
+        function addLog(step, msg, type='normal') {
             const content = document.getElementById('log-content');
             const div = document.createElement('div');
             div.className = `log-entry ${type}`;
-            
-            let html = `<div class="log-header"><span class="log-step">${step}</span><span class="log-msg">${msg}</span></div>`;
-            
-            if (inspect) {
-                let inspectHtml = `<div class="inspect-box">`;
-                inspectHtml += `<div class="inspect-label">Page Inspection</div>`;
-                if (inspect.title) inspectHtml += `<div><b>Title:</b> ${inspect.title}</div>`;
-                if (inspect.url) inspectHtml += `<div><b>URL:</b> ${inspect.url}</div>`;
-                if (inspect.visible_text_preview) inspectHtml += `<div><b>Text:</b> ${inspect.visible_text_preview}</div>`;
-                if (inspect.buttons_found && inspect.buttons_found.length) {
-                    inspectHtml += `<div><b>Buttons (${inspect.buttons_found.length}):</b></div>`;
-                    inspect.buttons_found.forEach(b => inspectHtml += `<div>  • ${b}</div>`);
-                }
-                if (inspect.inputs_found && inspect.inputs_found.length) {
-                    inspectHtml += `<div><b>Inputs (${inspect.inputs_found.length}):</b></div>`;
-                    inspect.inputs_found.forEach(i => inspectHtml += `<div>  • ${i}</div>`);
-                }
-                if (inspect.error) inspectHtml += `<div style="color:#ff4444"><b>Error:</b> ${inspect.error}</div>`;
-                inspectHtml += `</div>`;
-                html += inspectHtml;
-            }
-            
-            div.innerHTML = html;
+            div.innerHTML = `<div class="log-header"><span class="log-step">${step}</span><span class="log-msg">${msg}</span></div>`;
             content.appendChild(div);
             document.getElementById('logs').classList.remove('hidden');
             content.scrollTop = content.scrollHeight;
+
+            // Keep log manageable — remove old entries beyond 50
+            while (content.children.length > 50) {
+                content.removeChild(content.firstChild);
+            }
+        }
+
+        function updateStats(msg) {
+            const match = msg.match(/Total:\s*(\d+)/);
+            if (match) {
+                totalViews = parseInt(match[1]);
+                document.getElementById('stats-value').textContent = totalViews;
+                document.getElementById('stats').style.display = 'block';
+            }
         }
 
         function start() {
@@ -183,6 +186,9 @@
             if (!url) return;
             btn.disabled = true;
             content.innerHTML = '';
+            totalViews = 0;
+            document.getElementById('stats-value').textContent = '0';
+            document.getElementById('stats').style.display = 'block';
             document.getElementById('logs').classList.remove('hidden');
             addLog('...', 'Starting automation...', 'active');
 
@@ -193,6 +199,7 @@
             }).then(res => {
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder();
+                let buffer = '';
 
                 function read() {
                     reader.read().then(({done, value}) => {
@@ -200,18 +207,23 @@
                             btn.disabled = false;
                             return;
                         }
-                        const chunk = decoder.decode(value);
-                        const lines = chunk.split('\n\n');
-                        lines.forEach(line => {
-                            if (line.startsWith('data: ')) {
+                        buffer += decoder.decode(value, {stream: true});
+                        const parts = buffer.split('\n\n');
+                        buffer = parts.pop(); // keep incomplete chunk
+
+                        parts.forEach(part => {
+                            if (part.startsWith('data: ')) {
                                 try {
-                                    const data = JSON.parse(line.slice(6));
-                                    let type = 'normal';
+                                    const data = JSON.parse(part.slice(6));
+                                    let type = 'active';
                                     if (data.step === 99) type = 'error';
+                                    else if (data.step === 17 || data.step === 18) type = 'success';
+                                    else if (data.step === 13) type = 'wait';
                                     else if (data.done && data.step !== 99) type = 'success';
-                                    else type = 'active';
-                                    
-                                    addLog(data.step, data.message, type, data.inspect);
+
+                                    addLog(data.step, data.message, type);
+                                    updateStats(data.message);
+
                                     if (data.done) btn.disabled = false;
                                 } catch(e) {}
                             }
