@@ -727,6 +727,35 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/tor-status")
+def tor_status():
+    import socket, subprocess as sp
+    ready = os.path.exists("/tmp/tor_ready")
+    log = ""
+    try:
+        with open("/tmp/tor.log") as f:
+            log = f.read()[-3000:]  # last 3KB
+    except:
+        log = "No log file yet"
+    ports = {}
+    for port in range(9050, 9060):
+        try:
+            s = socket.socket()
+            s.settimeout(0.5)
+            s.connect(("127.0.0.1", port))
+            s.close()
+            ports[port] = "OPEN"
+        except:
+            ports[port] = "CLOSED"
+    # Check if tor process exists
+    try:
+        result = sp.run(["pgrep", "-a", "tor"], capture_output=True, text=True, timeout=3)
+        tor_procs = result.stdout.strip()
+    except:
+        tor_procs = "unknown"
+    return jsonify({"ready": ready, "ports": ports, "processes": tor_procs, "log": log})
+
+
 @app.route("/sessions")
 def list_sessions():
     with sessions_lock:
