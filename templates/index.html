@@ -65,11 +65,13 @@
             border-radius: 12px;
             font-size: 14px;
             display: none;
+            word-break: break-word;
         }
         .status.show { display: block; }
         .status.success { background: rgba(0, 255, 100, 0.1); color: #00ff64; border: 1px solid rgba(0, 255, 100, 0.2); }
         .status.error { background: rgba(255, 0, 0, 0.1); color: #ff4444; border: 1px solid rgba(255, 0, 0, 0.2); }
         .status.loading { background: rgba(0, 212, 255, 0.1); color: #00d4ff; border: 1px solid rgba(0, 212, 255, 0.2); }
+        .status.timeout { background: rgba(255, 165, 0, 0.1); color: #ffa500; border: 1px solid rgba(255, 165, 0, 0.2); }
         .spinner {
             display: inline-block;
             width: 16px;
@@ -99,30 +101,48 @@
             const btn = document.getElementById('go');
             const status = document.getElementById('status');
 
-            if (!url) return;
+            if (!url) {
+                status.className = 'status show error';
+                status.textContent = 'Enter a TikTok URL';
+                return;
+            }
 
             btn.disabled = true;
             status.className = 'status show loading';
-            status.innerHTML = '<span class="spinner"></span>Running automation...';
+            status.innerHTML = '<span class="spinner"></span>Running automation (this takes ~30-60s)...';
 
             try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 200000); // 200s client timeout
+
                 const res = await fetch('/send', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({url})
+                    body: JSON.stringify({url}),
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
+
                 const data = await res.json();
 
                 if (data.status === 'success') {
                     status.className = 'status show success';
                     status.textContent = data.message;
+                } else if (data.status === 'timeout') {
+                    status.className = 'status show timeout';
+                    status.textContent = data.message + ' — Zefoy may be slow, try again';
                 } else {
                     status.className = 'status show error';
                     status.textContent = data.message || 'Failed';
                 }
             } catch (e) {
-                status.className = 'status show error';
-                status.textContent = 'Network error';
+                if (e.name === 'AbortError') {
+                    status.className = 'status show timeout';
+                    status.textContent = 'Request timed out — Zefoy is very slow right now';
+                } else {
+                    status.className = 'status show error';
+                    status.textContent = 'Network error: ' + e.message;
+                }
             }
 
             btn.disabled = false;
