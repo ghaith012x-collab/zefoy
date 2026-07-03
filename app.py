@@ -5,6 +5,10 @@ from PIL import Image, ImageOps
 from io import BytesIO
 from collections import Counter, deque
 import numpy as np
+import requests
+import hashlib
+import uuid
+import random
 
 # Thread-local tab prefix for log messages
 _tab_prefix = threading.local()
@@ -14,6 +18,21 @@ MAX_GLOBAL_BROWSERS = 3
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
 _active_browsers_lock = threading.Lock()
+
+
+# Random User-Agent pool for QQTube HTTP requests
+_QQTUBE_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+]
+
+def _random_ua():
+    return random.choice(_QQTUBE_USER_AGENTS)
 
 app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
@@ -1009,13 +1028,13 @@ def run_tab(session, tab_id):
 
 
 def run_qqtube_tab(session, tab_id):
-    """Runs a single QQTube bot tab — submits free likes, rotates IP, repeats forever."""
+    """QQTube free likes via pure HTTP API - no Chromium needed! Much faster & lighter."""
     import gc
     multi = session.num_tabs > 1
     _tab_prefix.value = f"[T{tab_id+1}] " if multi else ""
     
-    QQTUBE_URL = "https://www.qqtube.com/free-tiktok-likes"
-    MAX_FULL_RESTARTS = 1000  # effectively infinite
+    QQTUBE_API = "https://www.qqtube.com/fioj"
+    PAGE_URL = "https://www.qqtube.com/free-tiktok-likes"
     
     with session.count_lock:
         session.active_tabs += 1
@@ -1023,257 +1042,235 @@ def run_qqtube_tab(session, tab_id):
     try:
         submission_count = 0
         consecutive_cooldowns = 0
-        tor_port_offset = 0  # cycle through different SOCKS ports too
+        consecutive_recaptchas = 0
+        ips_tried = 0
+        tor_port_offset = 0
+        start_time = time.time()
         
-        for attempt in range(MAX_FULL_RESTARTS):
-            if session.stop_event.is_set():
-                return
+        while not session.stop_event.is_set():
+            # Use different SOCKS port each time for IP diversity
+            tor_port = 9050 + ((tab_id + tor_port_offset) % 10)
+            tor_port_offset += 1
             
-            browser = None
-            got_slot = False
+            # Rotate Tor circuit for fresh IP (except first run)
+            if USING_TOR and ips_tried > 0:
+                session.log("\U0001f504 Rotating Tor circuit for new IP...")
+                _rotate_tor_circuit()
+                time.sleep(2)
+            
+            ips_tried += 1
+            
+            # Generate unique fingerprint (mimics FingerprintJS visitor ID)
+            ffpr = hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:32]
+            
+            # Create fresh HTTP session with Tor proxy
+            http_sess = requests.Session()
+            ua = _random_ua()
+            http_sess.headers.update({
+                "User-Agent": ua,
+                "Content-Type": "application/json",
+                "Origin": "https://www.qqtube.com",
+                "Referer": PAGE_URL,
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+            
+            if USING_TOR:
+                http_sess.proxies = {
+                    "http": f"socks5h://127.0.0.1:{tor_port}",
+                    "https": f"socks5h://127.0.0.1:{tor_port}",
+                }
+                session.log(f"\U0001f9c5 IP #{ips_tried} via Tor port {tor_port}")
+            elif PROXY_URL:
+                http_sess.proxies = {"http": PROXY_URL, "https": PROXY_URL}
             
             try:
-                # Acquire global browser slot
-                if not _browser_semaphore.acquire(timeout=1):
-                    session.log("⏳ Waiting for browser slot (max 3 globally)...")
-                    _browser_semaphore.acquire()
-                got_slot = True
-                with _active_browsers_lock:
-                    global _active_browsers
-                    _active_browsers += 1
+                # STEP 1: Get services + check cooldown
+                session.log(f"\U0001f310 [{ips_tried}] Checking services...")
+                session.set_countdown("\U0001f50d Checking if this IP can submit...")
                 
-                # Rotate Tor circuit before each submission (except first)
-                if USING_TOR and submission_count > 0:
-                    session.log("🔄 Rotating Tor circuit for new IP...")
-                    _rotate_tor_circuit()
-                    time.sleep(3)  # Wait for new circuit to establish
+                r = http_sess.post(QQTUBE_API, json={
+                    "action": "services",
+                    "provider": "TikTok",
+                    "service_type": "Likes",
+                    "ffpr": ffpr,
+                    "referrer": ""
+                }, timeout=30)
+                svc_data = r.json()
                 
-                # Use different SOCKS port each time for extra IP diversity
-                tor_port = 9050 + ((tab_id + tor_port_offset) % 10)
-                tor_port_offset += 1
+                if svc_data.get("cooldown"):
+                    cd_msg = svc_data.get("cooldown_msg", "cooldown")
+                    consecutive_cooldowns += 1
+                    session.log(f"\u23f0 IP #{ips_tried} on cooldown: {cd_msg}")
+                    session.set_countdown(f"\U0001f504 {consecutive_cooldowns} IPs on cooldown, trying next...")
+                    
+                    if consecutive_cooldowns >= 20:
+                        session.log("\u26a0\ufe0f 20 consecutive cooldowns! Waiting 5 min...")
+                        for wi in range(300):
+                            if session.stop_event.is_set():
+                                return
+                            if wi % 30 == 0:
+                                session.set_countdown(f"\u23f3 Cooldown break: {(300-wi)//60}m {(300-wi)%60}s")
+                            time.sleep(1)
+                        consecutive_cooldowns = 0
+                    continue
                 
-                with sync_playwright() as p:
-                    launch_opts = {
-                        "headless": True,
-                        "args": [
-                            "--no-sandbox",
-                            "--disable-dev-shm-usage",
-                            "--disable-gpu",
-                            "--disable-extensions",
-                            "--disable-background-networking",
-                            "--disable-default-apps",
-                            "--disable-sync",
-                            "--disable-translate",
-                            "--no-first-run",
-                            "--renderer-process-limit=1",
-                            "--js-flags=--max-old-space-size=128",
-                            "--disable-software-rasterizer",
-                            "--single-process",
-                            "--memory-pressure-off",
-                        ],
-                    }
-                    if USING_TOR:
-                        launch_opts["proxy"] = {"server": f"socks5://127.0.0.1:{tor_port}"}
-                        if submission_count == 0:
-                            session.log(f"🧅 Routing through Tor (port {tor_port})...")
-                    elif PROXY_URL:
-                        launch_opts["proxy"] = {"server": PROXY_URL}
-                    
-                    browser = p.chromium.launch(**launch_opts)
-                    page = browser.new_page(viewport={"width": 1280, "height": 720})
-                    
-                    # Navigate to QQTube
-                    session.log(f"🌐 Loading QQTube (submission #{submission_count + 1})...")
-                    page.goto(QQTUBE_URL, wait_until="domcontentloaded", timeout=60000)
-                    time.sleep(4)
-                    
-                    # Check for cooldown
-                    page_text = page.inner_text("body")
-                    if "Come back in" in page_text or "already used" in page_text:
-                        # Extract cooldown time
-                        import re as _re
-                        cd_match = _re.search(r'Come back in (\d+h \d+m|\d+m)', page_text)
-                        cd_text = cd_match.group(1) if cd_match else "unknown"
+                if not svc_data.get("valid") or not svc_data.get("services"):
+                    session.log("\u26a0\ufe0f No services returned, retrying in 5s...")
+                    time.sleep(5)
+                    continue
+                
+                svc = svc_data["services"][0]
+                service_id = svc["service"]
+                quantity = svc.get("quantity", 100)
+                consecutive_cooldowns = 0
+                session.log(f"\u2705 IP clean! Service #{service_id}, qty: {quantity}")
+                
+                # STEP 2: Precheck URL
+                session.set_countdown("\U0001f50d Validating TikTok URL...")
+                r = http_sess.post(QQTUBE_API, json={
+                    "action": "precheck",
+                    "url": session.video_url,
+                    "service_id": service_id,
+                    "ffpr": ffpr
+                }, timeout=30)
+                pre_data = r.json()
+                
+                if pre_data.get("valid") == False:
+                    msg = pre_data.get("msg", "Invalid URL")
+                    session.log(f"\u274c URL rejected: {msg}")
+                    session.set_countdown(f"\u274c {msg}")
+                    time.sleep(10)
+                    continue
+                
+                # STEP 3: Start session
+                session.set_countdown("\U0001f680 Starting order session...")
+                flow_start = time.time()
+                
+                r = http_sess.post(QQTUBE_API, json={
+                    "action": "start",
+                    "ffpr": ffpr,
+                    "page_url": PAGE_URL
+                }, timeout=30)
+                start_data = r.json()
+                
+                if not start_data.get("valid"):
+                    msg = start_data.get("msg", "")
+                    if "already used" in msg.lower() or "cooldown" in msg.lower():
                         consecutive_cooldowns += 1
-                        session.log(f"⏰ IP on cooldown ({cd_text}), rotating... ({consecutive_cooldowns} IPs tried)")
-                        
-                        if consecutive_cooldowns >= 20:
-                            session.log("⚠️ 20 consecutive IPs on cooldown, waiting 5 min before retrying...")
-                            for wait_i in range(300):
+                        session.log(f"\u23f0 Start blocked: {msg}")
+                        continue
+                    session.log(f"\u26a0\ufe0f Start failed: {msg}")
+                    time.sleep(5)
+                    continue
+                
+                token = start_data.get("token", "")
+                wait_time_s = start_data.get("wait_time", 100)
+                bonus = start_data.get("a_send_qty", 0)
+                total_qty = quantity + bonus
+                
+                session.log(f"\U0001f3af Token OK! Wait: {wait_time_s}s, qty: {total_qty}")
+                
+                # STEP 4: Wait the required time
+                for wi in range(wait_time_s):
+                    if session.stop_event.is_set():
+                        return
+                    remaining_s = wait_time_s - wi
+                    pct = int((wi / max(wait_time_s, 1)) * 100)
+                    session.set_countdown(f"\u23f3 Processing: {pct}% \u2014 {remaining_s}s left")
+                    time.sleep(1)
+                
+                # STEP 5: Check session
+                session.set_countdown("\U0001f50d Verifying session...")
+                r = http_sess.post(QQTUBE_API, json={
+                    "action": "check",
+                    "token": token
+                }, timeout=30)
+                check_data = r.json()
+                
+                if not check_data.get("valid"):
+                    msg = check_data.get("msg", "Check failed")
+                    session.log(f"\u26a0\ufe0f Verification failed: {msg}")
+                    time.sleep(3)
+                    continue
+                
+                recaptcha_on = check_data.get("recaptcha_enabled", True)
+                if recaptcha_on is not False:
+                    consecutive_recaptchas += 1
+                    session.log(f"\U0001f512 reCAPTCHA required \u2014 attempting submit anyway (#{consecutive_recaptchas})...")
+                else:
+                    consecutive_recaptchas = 0
+                    session.log("\U0001f513 No reCAPTCHA needed!")
+                
+                # STEP 6: Place order
+                dwell = int(time.time() - flow_start)
+                session.set_countdown("\U0001f4e6 Placing order...")
+                
+                r = http_sess.post(QQTUBE_API, json={
+                    "action": "order",
+                    "service_id": service_id,
+                    "url": session.video_url,
+                    "quantity": quantity,
+                    "ffpr": ffpr,
+                    "token": token,
+                    "recaptcha_response": "",
+                    "dwell_seconds": dwell
+                }, timeout=30)
+                order_data = r.json()
+                
+                if order_data.get("valid"):
+                    total = session.add_count(total_qty)
+                    cycle = session.add_cycle()
+                    submission_count += 1
+                    consecutive_recaptchas = 0
+                    elapsed_min = (time.time() - start_time) / 60
+                    rate = int(total / elapsed_min) if elapsed_min > 0.5 else 0
+                    
+                    session.log(f"\U0001f389 +{total_qty} likes ordered! Total: {total:,} | IPs: {ips_tried} | ~{rate}/min")
+                    session.set_countdown(f"\u2705 {total:,} likes ordered \u2014 getting fresh IP!")
+                    time.sleep(2)
+                    session.set_countdown("")
+                else:
+                    msg = order_data.get("msg", "Order failed")
+                    session.log(f"\u274c Order rejected: {msg}")
+                    
+                    if "captcha" in msg.lower() or "recaptcha" in msg.lower():
+                        consecutive_recaptchas += 1
+                        session.log(f"\U0001f512 reCAPTCHA bypass failed \u2014 rotating IP...")
+                        if consecutive_recaptchas >= 10:
+                            session.log("\u26a0\ufe0f 10 reCAPTCHA fails, waiting 2 min...")
+                            for wi in range(120):
                                 if session.stop_event.is_set():
                                     return
-                                if wait_i % 60 == 0:
-                                    session.set_countdown(f"⏳ Cooldown break: {(300 - wait_i) // 60}m {(300 - wait_i) % 60}s")
                                 time.sleep(1)
-                            session.set_countdown("")
-                            consecutive_cooldowns = 0
-                        continue
+                            consecutive_recaptchas = 0
+                    elif "cooldown" in msg.lower() or "already" in msg.lower():
+                        consecutive_cooldowns += 1
                     
-                    consecutive_cooldowns = 0  # Reset on non-cooldown
-                    
-                    # Find and fill the URL input
-                    url_input = None
-                    for selector in [
-                        'input[placeholder*="tiktok"]',
-                        'input[placeholder*="TikTok"]',
-                        'input[placeholder*="Enter"]',
-                        'input[placeholder*="enter"]',
-                        'input[placeholder*="link"]',
-                        'input[placeholder*="URL"]',
-                        'input[placeholder*="url"]',
-                        'input[type="url"]',
-                        'input[type="text"]',
-                    ]:
-                        try:
-                            el = page.query_selector(selector)
-                            if el and el.is_visible():
-                                url_input = el
-                                break
-                        except:
-                            pass
-                    
-                    if not url_input:
-                        # Try finding it near the "Free Boost" section
-                        try:
-                            url_input = page.locator('input').filter(has_text='').first
-                        except:
-                            pass
-                    
-                    if not url_input:
-                        session.log("⚠️ Can't find URL input field, retrying...")
-                        continue
-                    
-                    url_input.fill(session.video_url)
-                    time.sleep(1)
-                    session.log(f"📝 URL filled: {session.video_url[:50]}...")
-                    
-                    # Find and click submit button
-                    submit_btn = None
-                    for selector in [
-                        'button:has-text("Get Free")',
-                        'button:has-text("Free Likes")',
-                        'button:has-text("Get Your")',
-                        'button:has-text("Submit")',
-                        'input[type="submit"]',
-                    ]:
-                        try:
-                            el = page.locator(selector).first
-                            if el.is_visible():
-                                submit_btn = el
-                                break
-                        except:
-                            pass
-                    
-                    if not submit_btn:
-                        session.log("⚠️ Can't find submit button, retrying...")
-                        continue
-                    
-                    submit_btn.click()
-                    session.log("🚀 Submitted! Waiting for processing...")
                     time.sleep(3)
-                    
-                    # Wait for completion (progress bar, placing order, success)
-                    completed = False
-                    for wait_step in range(120):  # Max 2 minutes wait
-                        if session.stop_event.is_set():
-                            return
-                        
-                        try:
-                            body_text = page.inner_text("body")
-                        except:
-                            session.log("💥 Page crashed during wait, restarting...")
-                            break
-                        
-                        # Success detection
-                        if any(kw in body_text.lower() for kw in [
-                            "order has been placed",
-                            "successfully",
-                            "order placed",
-                            "completed",
-                            "thank you",
-                            "check progress",
-                        ]):
-                            completed = True
-                            break
-                        
-                        # Error detection
-                        if any(kw in body_text.lower() for kw in [
-                            "invalid url",
-                            "invalid link",
-                            "error",
-                            "not found",
-                            "please enter a valid",
-                        ]):
-                            # Check if it's a real error vs page chrome
-                            if "invalid" in body_text.lower() or "not found" in body_text.lower():
-                                session.log(f"❌ QQTube rejected the URL — may be invalid or expired")
-                                time.sleep(10)
-                                break
-                        
-                        # Cooldown appeared after submit
-                        if "come back in" in body_text.lower():
-                            session.log("⏰ Cooldown detected after submit, rotating...")
-                            break
-                        
-                        # Progress update
-                        pct_match = __import__('re').search(r'(\d+)%', body_text)
-                        if pct_match:
-                            session.set_countdown(f"⏳ Processing: {pct_match.group(1)}%")
-                        elif "placing order" in body_text.lower():
-                            session.set_countdown("📦 Placing order...")
-                        
-                        time.sleep(1)
-                    
-                    session.set_countdown("")
-                    
-                    if completed:
-                        # Extract actual count if possible
-                        count = 100  # Default (QQTube gives 100 free likes)
-                        total = session.add_count(count)
-                        cycle = session.add_cycle()
-                        session.log(f"✅ +{count} likes sent! (Total: {total} | Cycle: {cycle})")
-                        submission_count += 1
-                        session.log(f"🔄 Rotating IP for next submission...")
-                    else:
-                        session.log("⚠️ Submission didn't complete, rotating IP and retrying...")
                 
+            except requests.exceptions.RequestException as e:
+                session.log(f"\U0001f310 Network error: {str(e)[:80]}")
+                time.sleep(5)
             except Exception as e:
-                err_str = str(e).lower()
-                if "crash" in err_str or "target closed" in err_str:
-                    session.log("💥 Browser crashed, restarting...")
-                else:
-                    session.log(f"⚠️ Error: {e}")
+                session.log(f"\u26a0\ufe0f Error: {str(e)[:100]}")
                 import traceback
                 traceback.print_exc()
+                time.sleep(5)
             finally:
                 try:
-                    if browser:
-                        browser.close()
+                    http_sess.close()
                 except:
                     pass
-                if got_slot:
-                    with _active_browsers_lock:
-                        _active_browsers = max(0, _active_browsers - 1)
-                    _browser_semaphore.release()
-                    got_slot = False
                 gc.collect()
             
-            # Small pause between submissions
             if not session.stop_event.is_set():
-                time.sleep(2)
-        
-        session.log("🛑 Tab exhausted all restart attempts.")
+                time.sleep(1)
     
-    except Exception as e:
-        session.log(f"❌ Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
     finally:
         with session.count_lock:
             session.active_tabs = max(0, session.active_tabs - 1)
-            if session.active_tabs <= 0 and session.status == "running":
-                session.status = "error"
-
+        session.log(f"\U0001f3c1 QQTube tab done. Submissions: {submission_count}")
 
 # ═══════════════════════════════════════════════════════════════
 #  ROUTES

@@ -4,3 +4,5 @@ playwright==1.40.0
 Pillow==10.1.0
 pytesseract==0.3.10
 numpy
+requests
+PySocks
