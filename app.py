@@ -472,15 +472,25 @@ def run_nreer_tab(session, tab_id):
                             "--disable-extensions",
                             "--disable-background-timer-throttling",
                             "--single-process",
+                            "--disable-blink-features=AutomationControlled",
                         ]
                     )
 
                     context = browser.new_context(
                         viewport={"width": 1280, "height": 800},
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                         locale="en-US",
                     )
                     context.set_default_timeout(30000)
+
+                    # Stealth: override navigator.webdriver to avoid bot detection
+                    context.add_init_script("""
+                        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                        Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                        window.chrome = {runtime: {}};
+                    """)
+
                     page = context.new_page()
 
                     # Block gambling/ad redirects
@@ -522,17 +532,13 @@ def run_nreer_tab(session, tab_id):
                         continue
                     time.sleep(5)
 
-                    # Quick Cloudflare check — if CF challenge, wait before entering captcha loop
+                    # Quick Cloudflare check — if CF is blocking this Tor exit, rotate IP immediately
                     cf_title = page.evaluate("document.title")
                     if cf_title and 'just a moment' in cf_title.lower():
-                        session.log("🛡️ Cloudflare challenge on initial load, waiting up to 15s...")
-                        for cfw in range(3):
-                            time.sleep(5)
-                            cf_title = page.evaluate("document.title")
-                            if cf_title and 'just a moment' not in cf_title.lower():
-                                session.log(f"✅ CF cleared! New title: {cf_title}")
-                                break
-                            session.log(f"   ⏳ CF still active ({(cfw+1)*5}s)...")
+                        session.log("🛡️ Cloudflare blocking this Tor exit, rotating IP...")
+                        renew_tor_circuit()
+                        session.log("🔄 Got new IP, restarting browser...")
+                        continue  # Restart with new browser + new IP
 
                     if not _safe_check(page):
                         session.log("💥 Page crashed on load, restarting...")
@@ -614,46 +620,10 @@ def run_nreer_tab(session, tab_id):
 
                                 # ── Cloudflare "Just a moment" challenge ──
                                 if 'just a moment' in page_title.lower() or 'security verification' in page_body.lower() or 'security service' in page_body.lower():
-                                    session.log(f"🛡️ Cloudflare challenge detected (attempt {captcha_attempt + 1}/20), waiting for auto-resolve...")
-                                    # DON'T reload — wait for Cloudflare JS challenge to auto-complete
-                                    for cf_wait in range(6):  # Up to 30 seconds
-                                        time.sleep(5)
-                                        if session.stop_event.is_set():
-                                            return
-                                        cf_check = page.evaluate("""() => {
-                                            const title = document.title;
-                                            const hasForm = !!document.querySelector('form#cat');
-                                            const hasCaptchaImg = !!document.querySelector('img[src*="captcha"]');
-                                            const hasCaptchaInput = !!document.querySelector('input[name="captcha"]');
-                                            const bodyText = document.body.innerText.substring(0, 200).toLowerCase();
-                                            return {
-                                                title: title,
-                                                resolved: hasForm || hasCaptchaImg || hasCaptchaInput,
-                                                hasDashboard: bodyText.includes('hearts') && (bodyText.includes('use') || bodyText.includes('favorites')),
-                                                isTryAgain: bodyText.includes('try again'),
-                                                isStillCF: title.toLowerCase().includes('just a moment')
-                                            };
-                                        }""")
-                                        if cf_check.get('resolved'):
-                                            session.log("✅ Cloudflare challenge passed! Captcha page loaded")
-                                            break  # Will re-enter the captcha loop and find the captcha
-                                        elif cf_check.get('hasDashboard'):
-                                            session.log("✅ Cloudflare passed — dashboard visible!")
-                                            captcha_solved = True
-                                            break
-                                        elif cf_check.get('isTryAgain'):
-                                            session.log("⚠️ Cloudflare passed but got 'try again', rotating IP...")
-                                            renew_tor_circuit()
-                                            break
-                                        elif not cf_check.get('isStillCF'):
-                                            session.log(f"🔄 CF challenge page changed to: {cf_check.get('title','')}")
-                                            break
-                                        else:
-                                            session.log(f"   ⏳ Still waiting for CF ({(cf_wait+1)*5}s)...")
-
-                                    if captcha_solved:
-                                        break
-                                    continue  # Re-check from top of captcha loop
+                                    session.log(f"🛡️ Cloudflare blocking this exit (attempt {captcha_attempt + 1}/20), rotating IP...")
+                                    renew_tor_circuit()
+                                    session.log("🔄 Got new IP, restarting browser...")
+                                    break  # Break captcha loop → restart browser with new IP
 
                                 # ── Regular "page not ready" (unknown state) ──
                                 session.log(f"⚠️ Page not ready (attempt {captcha_attempt + 1}/20) title='{page_title}' text: {page_body[:80]}")
