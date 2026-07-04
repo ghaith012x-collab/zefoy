@@ -774,9 +774,10 @@ def run_tab(session, tab_id):
                                 wait_secs += 5
 
                                 if wait_secs > 30:
-                                    session.log(f"\u23f3 Rate limited ({wait_secs}s) — rotating IP instead of waiting...")
+                                    session.log(f"\u23f3 Rate limited ({wait_secs}s) — rotating IP...")
                                     session.set_countdown("")
-                                    break  # restart with fresh browser + new Tor circuit
+                                    crashed_in_check = True  # force browser restart + new Tor circuit
+                                    break
 
                                 session.log(f"\u23f3 Rate limited ({wait_secs}s)")
 
@@ -1109,6 +1110,16 @@ def remove_session(sid):
             return jsonify({"error": "Can only remove stopped sessions"}), 400
         del sessions[sid]
     return jsonify({"ok": True})
+
+
+@app.route("/debug/<int:sid>")
+def debug_logs(sid):
+    """Return last 100 log entries for a session."""
+    with sessions_lock:
+        session = sessions.get(sid)
+        if not session:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"id": sid, "logs": session.logs[-100:], "cycles": session.cycles, "count": session.total_count})
 
 
 if __name__ == "__main__":
