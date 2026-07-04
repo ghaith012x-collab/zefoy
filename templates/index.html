@@ -86,6 +86,7 @@ body { background:#0a0a1a; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-
             <option value="nreer_hearts">💖 Nreer Hearts</option>
         </select>
         <input type="text" id="urlInput" placeholder="Paste TikTok URL...">
+        <input type="text" id="usernameInput" placeholder="Comment username..." style="display:none; max-width:160px;">
         <div class="tabs-group">
             <label>Tabs:</label>
             <input type="number" id="tabsInput" value="1" min="1" max="10">
@@ -98,6 +99,14 @@ body { background:#0a0a1a; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-
 
 <script>
 const sessionsEl = document.getElementById('sessions');
+
+// Show/hide username input for Comment Hearts
+const serviceSelect = document.getElementById('serviceSelect');
+const usernameInput = document.getElementById('usernameInput');
+serviceSelect.addEventListener('change', () => {
+    usernameInput.style.display = serviceSelect.value === 'comment_hearts' ? '' : 'none';
+    if (serviceSelect.value !== 'comment_hearts') usernameInput.value = '';
+});
 const globalStats = document.getElementById('globalStats');
 const cards = {};
 const MAX_LOG_LINES = 200;
@@ -113,7 +122,7 @@ function startSession() {
     fetch('/start', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({url, service, tabs})
+        body: JSON.stringify({url, service, tabs, username: document.getElementById('usernameInput').value.trim()})
     })
     .then(r => r.json())
     .then(data => {
@@ -146,7 +155,7 @@ function createCard(s) {
             <span>Cycles: <span id="cycles-${s.id}">0</span></span>
             ${(s.numTabs || 1) > 1 ? `<span>Tabs: <span id="activetabs-${s.id}">${s.numTabs}</span>/${s.numTabs}</span>` : ''}
         </div>
-        <div class="card-url">${s.url}</div>
+        <div class="card-url">${s.url}${s.username ? ' &nbsp;👤 @' + s.username : ''}</div>
         ${tabsInfo}
         <div class="log-box" id="log-${s.id}"></div>
         <div class="countdown-bar" id="cd-${s.id}" style="display:none"></div>

@@ -42,6 +42,44 @@ if not PROXY_URL and USE_TOR:
 else:
     USING_TOR = False
 
+
+
+def renew_tor_circuit():
+    """Signal Tor to build new circuits (get a fresh IP)."""
+    import socket
+    try:
+        cookie_path = "/tmp/tor-data/control_auth_cookie"
+        if not os.path.exists(cookie_path):
+            print("[TOR] No control cookie found — cannot renew circuit", flush=True)
+            return False
+        with open(cookie_path, "rb") as f:
+            cookie = f.read()
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(10)
+        s.connect(("127.0.0.1", 9060))
+        s.send(b"AUTHENTICATE " + cookie.hex().encode() + b"\r\n")
+        resp = s.recv(256)
+        if b"250" not in resp:
+            print(f"[TOR] Auth failed: {resp}", flush=True)
+            s.close()
+            return False
+
+        s.send(b"SIGNAL NEWNYM\r\n")
+        resp = s.recv(256)
+        s.close()
+
+        if b"250" in resp:
+            print("[TOR] ✅ New circuit requested — fresh IP incoming!", flush=True)
+            time.sleep(5)  # Give Tor time to build new circuits
+            return True
+        else:
+            print(f"[TOR] NEWNYM failed: {resp}", flush=True)
+            return False
+    except Exception as e:
+        print(f"[TOR] Circuit renewal error: {e}", flush=True)
+        return False
+
 # ═══════════════════════════════════════════════════════════════
 #  SERVICES
 # ═══════════════════════════════════════════════════════════════
@@ -288,13 +326,14 @@ class Session:
     _counter = 0
     _lock = threading.Lock()
 
-    def __init__(self, video_url, service="views", num_tabs=1):
+    def __init__(self, video_url, service="views", num_tabs=1, username=""):
         with Session._lock:
             Session._counter += 1
             self.id = Session._counter
         self.video_url = video_url
         self.service = service  # key into SERVICES dict
         self.num_tabs = max(1, min(num_tabs, 5))  # clamp 1-5
+        self.username = username.strip()  # For comment hearts: auto-select this user's comment
         self.status = "starting"
         self.total_count = 0
         self.cycles = 0
@@ -343,6 +382,7 @@ class Session:
             "countdown": self.countdown,
             "numTabs": self.num_tabs,
             "activeTabs": self.active_tabs,
+            "username": self.username,
         }
 
 
@@ -517,6 +557,10 @@ def run_nreer_tab(session, tab_id):
                                 page_text = page.evaluate("document.body.innerText.substring(0, 300)")
                                 if "try again" in page_text.lower():
                                     session.log("⚠️ Nreer says 'try again later', rotating IP...")
+                                    if renew_tor_circuit():
+                                        session.log("🔄 Tor circuit renewed, retrying with fresh IP...")
+                                    else:
+                                        session.log("⚠️ Could not renew Tor circuit, restarting browser...")
                                     break
 
                                 session.log(f"⚠️ Page not ready (attempt {captcha_attempt + 1}/20)...")
@@ -711,6 +755,8 @@ def run_nreer_tab(session, tab_id):
                                         # Long wait — rotate IP
                                         session.log("🔄 Long cooldown, rotating IP...")
                                         session.set_countdown("")
+                                        if USING_TOR:
+                                            renew_tor_circuit()
                                         break
                                     else:
                                         # Short wait — just wait it out
@@ -915,6 +961,8 @@ def run_nreer_tab(session, tab_id):
             return
 
         # Wait before retry — new browser gets new Tor circuit
+        if USING_TOR:
+            renew_tor_circuit()
         session.log("🔄 Restarting with fresh Tor circuit...")
         time.sleep(5)
 
@@ -1214,6 +1262,65 @@ def run_tab(session, tab_id):
                             session.log(f"\u26a0\ufe0f Error filling URL: {fill_err}")
                             time.sleep(3)
                             continue
+
+                        # ── Comment Hearts: auto-select comment by username ──
+                        if session.service == "comment_hearts" and session.username:
+                            for _comment_wait in range(15):
+                                if session.stop_event.is_set():
+                                    break
+                                try:
+                                    comment_result = page.evaluate("""(targetUser) => {
+                                        // Look for radio buttons or comment list items
+                                        const radios = document.querySelectorAll('input[type="radio"]');
+                                        if (radios.length === 0) return {status: 'no_comments'};
+
+                                        let found = false;
+                                        let allUsers = [];
+                                        for (const radio of radios) {
+                                            // Get the parent row/label to find the username text
+                                            const row = radio.closest('tr, label, div, li') || radio.parentElement;
+                                            const rowText = row ? row.innerText.trim() : '';
+                                            allUsers.push(rowText.substring(0, 60));
+
+                                            if (targetUser && rowText.toLowerCase().includes(targetUser.toLowerCase())) {
+                                                radio.click();
+                                                radio.checked = true;
+                                                radio.dispatchEvent(new Event('change', {bubbles: true}));
+                                                found = true;
+                                                break;
+                                            }
+                                        }
+
+                                        if (!found && radios.length > 0) {
+                                            // Fallback: select first comment
+                                            radios[0].click();
+                                            radios[0].checked = true;
+                                            radios[0].dispatchEvent(new Event('change', {bubbles: true}));
+                                            return {status: 'fallback', users: allUsers, count: radios.length};
+                                        }
+
+                                        return found ? {status: 'found', count: radios.length} : {status: 'no_comments'};
+                                    }""", session.username)
+
+                                    status = comment_result.get('status', 'no_comments')
+                                    if status == 'found':
+                                        session.log(f"✅ Selected comment by @{session.username}")
+                                        time.sleep(1)
+                                        break
+                                    elif status == 'fallback':
+                                        count = comment_result.get('count', 0)
+                                        session.log(f"⚠️ @{session.username} not found in {count} comments, selected first")
+                                        time.sleep(1)
+                                        break
+                                    else:
+                                        # Comments not loaded yet
+                                        time.sleep(1)
+                                        continue
+                                except Exception as ce:
+                                    err_s = str(ce).lower()
+                                    if "crash" in err_s or "target closed" in err_s:
+                                        break
+                                    time.sleep(1)
 
                         crashed_in_check = False
                         for check_round in range(120):
@@ -1567,7 +1674,8 @@ def start():
     if service not in SERVICES:
         return jsonify({"error": f"Unknown service: {service}"}), 400
 
-    session = Session(url, service=service, num_tabs=tabs)
+    username = data.get("username", "").strip()
+    session = Session(url, service=service, num_tabs=tabs, username=username)
     with sessions_lock:
         sessions[session.id] = session
 
