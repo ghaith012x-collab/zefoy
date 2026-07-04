@@ -320,6 +320,42 @@ def parse_wait_time(text):
     return total
 
 
+
+
+def resolve_comment_link(url):
+    """Resolve a TikTok comment short URL to extract comment_id."""
+    if not url:
+        return None
+    try:
+        import urllib.request
+        from urllib.parse import urlparse, parse_qs
+        req = urllib.request.Request(url)
+        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        response = urllib.request.urlopen(req, timeout=15)
+        final_url = response.url
+        parsed = urlparse(final_url)
+        params = parse_qs(parsed.query)
+        comment_id = params.get('comment', [None])[0] or params.get('reply_comment_id', [None])[0]
+        # Extract video creator username from path: /@username/video/...
+        path_parts = parsed.path.strip('/').split('/')
+        video_creator = path_parts[0].lstrip('@') if path_parts else None
+        # Extract video ID
+        video_id = None
+        if 'video' in path_parts:
+            idx = path_parts.index('video')
+            if idx + 1 < len(path_parts):
+                video_id = path_parts[idx + 1]
+        print(f"[BOT] Resolved comment link: url={final_url}, comment_id={comment_id}, video_id={video_id}", flush=True)
+        return {
+            'final_url': final_url,
+            'comment_id': comment_id,
+            'video_creator': video_creator,
+            'video_id': video_id,
+        }
+    except Exception as e:
+        print(f"[BOT] Comment link resolution failed: {e}", flush=True)
+        return None
+
 # ═══════════════════════════════════════════════════════════════
 #  SESSION MANAGEMENT
 # ═══════════════════════════════════════════════════════════════
@@ -328,12 +364,14 @@ class Session:
     _counter = 0
     _lock = threading.Lock()
 
-    def __init__(self, video_url, service="views", num_tabs=1):
+    def __init__(self, video_url, service="views", num_tabs=1, comment_url=""):
         with Session._lock:
             Session._counter += 1
             self.id = Session._counter
         self.video_url = video_url
         self.service = service  # key into SERVICES dict
+        self.comment_url = comment_url  # TikTok comment link for comment_hearts
+        self.comment_target = None  # Resolved comment info {comment_id, video_creator, ...}
         self.num_tabs = max(1, min(num_tabs, 5))  # clamp 1-5
         self.status = "starting"
         self.total_count = 0
@@ -373,6 +411,7 @@ class Session:
         return {
             "id": self.id,
             "url": self.video_url,
+            "commentUrl": self.comment_url,
             "service": self.service,
             "serviceName": self.svc["name"],
             "serviceEmoji": self.svc["emoji"],
@@ -715,33 +754,78 @@ def run_tab(session, tab_id):
                             time.sleep(3)
                             continue
 
-                        # ── Comment Hearts: auto-select first comment radio button ──
+                        # ── Comment Hearts: select matching comment radio button ──
                         if session.service == "comment_hearts":
-                            for _comment_wait in range(15):
+                            target_comment_id = None
+                            if session.comment_target:
+                                target_comment_id = session.comment_target.get('comment_id')
+                                session.log(f"🎯 Looking for comment ID: {target_comment_id}")
+
+                            for _comment_wait in range(20):
                                 if session.stop_event.is_set():
                                     break
                                 try:
-                                    comment_result = page.evaluate("""() => {
+                                    comment_result = page.evaluate("""(targetId) => {
                                         const radios = document.querySelectorAll('input[type="radio"]');
                                         if (radios.length === 0) return {status: 'no_comments'};
-                                        // Select the first comment
+
+                                        // Collect all comment info for logging
+                                        const allComments = [];
+                                        for (let i = 0; i < radios.length; i++) {
+                                            const row = radios[i].closest('tr, label, div, li') || radios[i].parentElement;
+                                            const rowText = row ? row.innerText.trim().substring(0, 80) : '';
+                                            const rowHtml = row ? row.innerHTML : '';
+                                            allComments.push({idx: i, val: radios[i].value || '', text: rowText});
+                                        }
+
+                                        // Try to match by comment ID if we have one
+                                        if (targetId) {
+                                            for (let i = 0; i < radios.length; i++) {
+                                                const radio = radios[i];
+                                                const val = radio.value || '';
+                                                const row = radio.closest('tr, label, div, li') || radio.parentElement;
+                                                const rowHtml = row ? row.innerHTML : '';
+
+                                                if (val.includes(targetId) || rowHtml.includes(targetId)) {
+                                                    radio.click();
+                                                    radio.checked = true;
+                                                    radio.dispatchEvent(new Event('change', {bubbles: true}));
+                                                    const rowText = row ? row.innerText.trim().substring(0, 80) : '';
+                                                    return {status: 'matched', count: radios.length, text: rowText, index: i, comments: allComments};
+                                                }
+                                            }
+                                        }
+
+                                        // Fallback: select first comment
                                         radios[0].click();
                                         radios[0].checked = true;
                                         radios[0].dispatchEvent(new Event('change', {bubbles: true}));
                                         const row = radios[0].closest('tr, label, div, li') || radios[0].parentElement;
-                                        const rowText = row ? row.innerText.trim().substring(0, 60) : '';
-                                        return {status: 'selected', count: radios.length, text: rowText};
-                                    }""")
+                                        const rowText = row ? row.innerText.trim().substring(0, 80) : '';
+                                        return {status: 'fallback', count: radios.length, text: rowText, comments: allComments};
+                                    }""", target_comment_id)
 
                                     status = comment_result.get('status', 'no_comments')
-                                    if status == 'selected':
-                                        count = comment_result.get('count', 0)
+                                    if status == 'matched':
+                                        cnt = comment_result.get('count', 0)
                                         text = comment_result.get('text', '')
-                                        session.log(f"✅ Selected comment ({count} found): {text[:40]}")
+                                        idx = comment_result.get('index', 0)
+                                        session.log(f"✅ Matched comment #{idx+1}/{cnt}: {text[:50]}")
+                                        time.sleep(1)
+                                        break
+                                    elif status == 'fallback':
+                                        cnt = comment_result.get('count', 0)
+                                        text = comment_result.get('text', '')
+                                        comments = comment_result.get('comments', [])
+                                        if target_comment_id:
+                                            session.log(f"⚠️ Comment ID '{target_comment_id}' not found in {cnt} comments, selected first: {text[:50]}")
+                                            for c in comments[:5]:
+                                                session.log(f"   📝 [{c.get('idx')}] val={c.get('val','')[:20]} text={c.get('text','')[:40]}")
+                                        else:
+                                            session.log(f"✅ Selected first comment ({cnt} found): {text[:50]}")
                                         time.sleep(1)
                                         break
                                     else:
-                                        # Comments not loaded yet
                                         time.sleep(1)
                                         continue
                                 except Exception as ce:
@@ -922,7 +1006,7 @@ def run_tab(session, tab_id):
                                         session.log(f"\u26a0\ufe0f Could not set limit dropdown: {sel_err}")
 
                                 x, y = page_state['x'], page_state['y']
-                                session.log(f"{emoji} Sending {unit}...")
+                                session.log(f"{emoji} Sending {unit} (clicking {x:.0f},{y:.0f})...")
                                 try:
                                     page.mouse.click(x, y)
                                 except Exception as click_err:
@@ -930,29 +1014,60 @@ def run_tab(session, tab_id):
                                     if "crash" in err_str or "target closed" in err_str:
                                         crashed_in_check = True
                                         break
-                                time.sleep(2)
+                                time.sleep(0.5)
 
                                 count = 0
-                                for _ in range(30):
+                                found_result = False
+                                for wait_i in range(50):
                                     try:
                                         body = page.inner_text("body")
-                                        if "successfully" in body.lower():
+                                        lower_body = body.lower()
+
+                                        if wait_i == 0:
+                                            snippet = body.replace('\n', ' ')[:300]
+                                            session.log(f"🔍 Page after click: {snippet}")
+
+                                        # Check for success message (highest priority)
+                                        if "successfully" in lower_body:
                                             for line in body.split('\n'):
                                                 if 'successfully' in line.lower():
-                                                    line_nums = [int(n) for n in re.findall(r'\d+', line) if not (2020 <= int(n) <= 2035) and int(n) < 100000]
-                                                    line_nums = [n for n in [int(x) for x in re.findall(r'\d+', line)] if not (2020 <= n <= 2035) and n < 100000]
+                                                    session.log(f"📝 Raw success: {line.strip()[:120]}")
+                                                    try:
+                                                        line_nums = [int(m) for m in re.findall(r'\d+', line) if not (2020 <= int(m) <= 2035) and int(m) < 100000]
+                                                    except:
+                                                        line_nums = []
                                                     if line_nums:
                                                         count = max(line_nums)
-                                                break
-                                            if count == 0:
-                                                all_nums = [int(n) for n in re.findall(r'\d+', body) if not (2020 <= int(n) <= 2035) and int(n) < 100000]
-                                                if all_nums:
-                                                    count = max(all_nums)
+                                                    break
                                             new_total = session.add_count(count)
+                                            found_result = True
+                                            break
+
+                                        # Rate limit after click = implicit success
+                                        if "please wait" in lower_body and ("minute" in lower_body or "second" in lower_body):
+                                            # Try to find count from any remaining success text
+                                            for line in body.split('\n'):
+                                                ll = line.lower()
+                                                if any(kw in ll for kw in ['sent', 'added', 'delivered', 'success']):
+                                                    try:
+                                                        nums = [int(m) for m in re.findall(r'\d+', line) if not (2020 <= int(m) <= 2035) and int(m) < 100000 and int(m) > 0]
+                                                    except:
+                                                        nums = []
+                                                    if nums:
+                                                        count = max(nums)
+                                                        session.log(f"📝 Found count in rate-limit page: {count}")
+                                                        break
+                                            if count == 0:
+                                                session.log(f"⏳ Rate limit after send ({unit} sent, count not captured)")
+                                            new_total = session.add_count(count)
+                                            found_result = True
                                             break
                                     except:
                                         pass
-                                    time.sleep(1)
+                                    time.sleep(0.3)
+
+                                if not found_result:
+                                    new_total = session.add_count(0)
 
                                 if count > 0:
                                     zero_streak = 0
@@ -1096,13 +1211,21 @@ def start():
     data = request.get_json()
     url = data.get("url", "").strip()
     service = data.get("service", "views").strip().lower()
+    comment_url = data.get("comment_url", "").strip()
     tabs = int(data.get("tabs", 1))
     if not url:
         return jsonify({"error": "No URL provided"}), 400
     if service not in SERVICES:
         return jsonify({"error": f"Unknown service: {service}"}), 400
+    if service == "comment_hearts" and not comment_url:
+        return jsonify({"error": "Comment link is required for Comment Hearts"}), 400
 
-    session = Session(url, service=service, num_tabs=tabs)
+    session = Session(url, service=service, num_tabs=tabs, comment_url=comment_url)
+
+    # Resolve comment link to extract comment_id for matching
+    if comment_url:
+        session.comment_target = resolve_comment_link(comment_url)
+
     with sessions_lock:
         sessions[session.id] = session
 
