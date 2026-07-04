@@ -323,19 +323,62 @@ def parse_wait_time(text):
 
 
 def resolve_comment_link(url):
-    """Resolve a TikTok comment short URL to extract comment_id."""
+    """Resolve a TikTok comment short URL to extract comment_id.
+    Tries multiple methods: urllib redirect following, then regex on response body."""
     if not url:
         return None
     try:
         import urllib.request
-        from urllib.parse import urlparse, parse_qs
-        req = urllib.request.Request(url)
-        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        response = urllib.request.urlopen(req, timeout=15)
-        final_url = response.url
+        from urllib.parse import urlparse, parse_qs, unquote
+
+        # Method 1: Follow redirects with urllib
+        final_url = url
+        try:
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            response = urllib.request.urlopen(req, timeout=15)
+            final_url = response.url
+            body_text = ""
+            try:
+                body_text = response.read(50000).decode('utf-8', errors='ignore')
+            except:
+                pass
+        except urllib.error.HTTPError as e:
+            final_url = e.headers.get('Location', url) if hasattr(e, 'headers') else url
+            body_text = ""
+        except Exception:
+            body_text = ""
+
+        print(f"[BOT] Comment link resolved to: {final_url}", flush=True)
+
+        # Parse comment_id from URL query params
         parsed = urlparse(final_url)
         params = parse_qs(parsed.query)
         comment_id = params.get('comment', [None])[0] or params.get('reply_comment_id', [None])[0]
+
+        # If no comment_id in URL, try to find it in the page body (redirect meta, JS)
+        if not comment_id and body_text:
+            # Look for comment= in any URL in the body
+            import re as _re
+            comment_matches = _re.findall(r'comment=(\d+)', body_text)
+            if comment_matches:
+                comment_id = comment_matches[0]
+            # Also try reply_comment_id
+            if not comment_id:
+                reply_matches = _re.findall(r'reply_comment_id=(\d+)', body_text)
+                if reply_matches:
+                    comment_id = reply_matches[0]
+            # Try canonical URL or og:url meta tag
+            if not comment_id:
+                og_matches = _re.findall(r'(?:canonical|og:url)["\']?\s*(?:content|href)=["\']([^"\']+)["\']', body_text)
+                for og_url in og_matches:
+                    og_parsed = urlparse(unquote(og_url))
+                    og_params = parse_qs(og_parsed.query)
+                    cid = og_params.get('comment', [None])[0]
+                    if cid:
+                        comment_id = cid
+                        break
+
         # Extract video creator username from path: /@username/video/...
         path_parts = parsed.path.strip('/').split('/')
         video_creator = path_parts[0].lstrip('@') if path_parts else None
@@ -345,7 +388,8 @@ def resolve_comment_link(url):
             idx = path_parts.index('video')
             if idx + 1 < len(path_parts):
                 video_id = path_parts[idx + 1]
-        print(f"[BOT] Resolved comment link: url={final_url}, comment_id={comment_id}, video_id={video_id}", flush=True)
+
+        print(f"[BOT] Resolved comment: comment_id={comment_id}, video_id={video_id}, creator={video_creator}", flush=True)
         return {
             'final_url': final_url,
             'comment_id': comment_id,
@@ -980,6 +1024,15 @@ def run_tab(session, tab_id):
                                 count = page_state.get('count', 0)
                                 if raw_line:
                                     session.log(f"📝 Zefoy raw: {raw_line[:120]}")
+                                # If success but no count, try to read from dropdown
+                                if count == 0:
+                                    try:
+                                        sel_val = page.locator("select#selectlimit, select[name='select_lmt'], select.form-select").first.input_value()
+                                        if sel_val:
+                                            count = int(sel_val)
+                                            session.log(f"📝 No count in msg, using dropdown: {count}")
+                                    except:
+                                        pass
                                 new_total = session.add_count(count)
                                 if count > 0:
                                     zero_streak = 0
@@ -996,10 +1049,15 @@ def run_tab(session, tab_id):
                                 break
 
                             elif state_type == 'bar':
+                                selected_limit = 0
                                 if page_state.get('hasSelect') and page_state.get('selectOptions'):
                                     try:
                                         best = page_state['selectOptions'][-1]
                                         page.locator("select#selectlimit, select[name='select_lmt'], select.form-select").first.select_option(best)
+                                        try:
+                                            selected_limit = int(best)
+                                        except:
+                                            selected_limit = 0
                                         session.log(f"\U0001f4ca Selected limit: {best}")
                                         time.sleep(0.5)
                                     except Exception as sel_err:
@@ -1039,6 +1097,19 @@ def run_tab(session, tab_id):
                                                     if line_nums:
                                                         count = max(line_nums)
                                                     break
+                                            # If success message had no number, use the selected limit
+                                            if count == 0 and selected_limit > 0:
+                                                count = selected_limit
+                                                session.log(f"📝 No count in success msg, using selected limit: {count}")
+                                            elif count == 0:
+                                                # Try to read select value from page
+                                                try:
+                                                    sel_val = page.locator("select#selectlimit, select[name='select_lmt'], select.form-select").first.input_value()
+                                                    if sel_val:
+                                                        count = int(sel_val)
+                                                        session.log(f"📝 Read count from dropdown: {count}")
+                                                except:
+                                                    pass
                                             new_total = session.add_count(count)
                                             found_result = True
                                             break
@@ -1057,7 +1128,11 @@ def run_tab(session, tab_id):
                                                         count = max(nums)
                                                         session.log(f"📝 Found count in rate-limit page: {count}")
                                                         break
-                                            if count == 0:
+                                            # Fallback to selected limit
+                                            if count == 0 and selected_limit > 0:
+                                                count = selected_limit
+                                                session.log(f"📝 Rate limit after send, using selected limit: {count}")
+                                            elif count == 0:
                                                 session.log(f"⏳ Rate limit after send ({unit} sent, count not captured)")
                                             new_total = session.add_count(count)
                                             found_result = True
