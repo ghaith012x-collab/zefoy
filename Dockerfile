@@ -2,10 +2,11 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-# Install system dependencies: Tor, Tesseract, and Chromium runtime libs
+# Install system dependencies: Tor, Tesseract, dictionary, and Chromium runtime libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tor \
     tesseract-ocr \
+    wamerican \
     # Chromium runtime dependencies
     libnss3 \
     libnspr4 \
