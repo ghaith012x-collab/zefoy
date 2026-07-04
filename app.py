@@ -516,7 +516,7 @@ def run_nreer_tab(session, tab_id):
                     # ── Load Nreer ──
                     session.log("🌐 Loading nreer.com...")
                     page.goto(NREER_URL, wait_until="domcontentloaded", timeout=60000)
-                    time.sleep(3)
+                    time.sleep(8)  # Wait longer for page to fully render through Tor
 
                     if not _safe_check(page):
                         session.log("💥 Page crashed on load, restarting...")
@@ -535,11 +535,28 @@ def run_nreer_tab(session, tab_id):
                             break
 
                         try:
-                            # Check if captcha is present
+                            # Check if captcha is present (specific or broad selectors)
                             has_captcha = page.evaluate("""() => {
-                                const img = document.querySelector('img[src*="captcha"]');
-                                const input = document.querySelector('input[name="captcha"]');
-                                return !!(img && input);
+                                // Try specific selectors first
+                                const img1 = document.querySelector('img[src*="captcha"]');
+                                const input1 = document.querySelector('input[name="captcha"]');
+                                if (img1 && input1) return true;
+                                // Broader: look for form#cat with any image and text input
+                                const form = document.querySelector('form#cat');
+                                if (form) {
+                                    const img2 = form.querySelector('img') || document.querySelector('img.card-img-top');
+                                    const input2 = form.querySelector('input[type="text"]');
+                                    if (img2 && input2) return true;
+                                }
+                                // Even broader: any form with captcha-like content
+                                const anyForm = document.querySelector('form');
+                                if (anyForm) {
+                                    const hasImg = !!document.querySelector('img');
+                                    const hasTextInput = !!document.querySelector('input[type="text"]');
+                                    const bodyText = document.body.innerText.toLowerCase();
+                                    if (hasImg && hasTextInput && (bodyText.includes('security') || bodyText.includes('captcha') || bodyText.includes('word'))) return true;
+                                }
+                                return false;
                             }""")
 
                             if not has_captcha:
@@ -563,7 +580,43 @@ def run_nreer_tab(session, tab_id):
                                         session.log("⚠️ Could not renew Tor circuit, restarting browser...")
                                     break
 
-                                session.log(f"⚠️ Page not ready (attempt {captcha_attempt + 1}/20)...")
+                                # Diagnostic: log what the page actually contains
+                                diag = page.evaluate("""() => {
+                                    return {
+                                        url: window.location.href,
+                                        title: document.title,
+                                        bodyLen: document.body.innerHTML.length,
+                                        text: document.body.innerText.substring(0, 200),
+                                        hasForm: !!document.querySelector('form'),
+                                        hasImg: !!document.querySelector('img'),
+                                        hasInput: !!document.querySelector('input'),
+                                        formIds: Array.from(document.querySelectorAll('form')).map(f => f.id),
+                                        imgSrcs: Array.from(document.querySelectorAll('img')).map(i => i.src.substring(0, 80)),
+                                        inputNames: Array.from(document.querySelectorAll('input')).map(i => i.name)
+                                    };
+                                }""")
+                                session.log(f"⚠️ Page not ready (attempt {captcha_attempt + 1}/20) URL={diag.get('url','')} title={diag.get('title','')} bodyLen={diag.get('bodyLen',0)}")
+                                session.log(f"   forms={diag.get('formIds')} imgs={diag.get('imgSrcs')} inputs={diag.get('inputNames')}")
+                                session.log(f"   text: {str(diag.get('text',''))[:120]}")
+
+                                # If the page has a form with inputs but our selectors missed it, try broader detection
+                                if diag.get('hasForm') and diag.get('hasInput'):
+                                    # Try to detect captcha with broader selectors
+                                    broad_captcha = page.evaluate("""() => {
+                                        const form = document.querySelector('form');
+                                        const img = document.querySelector('img');
+                                        const input = document.querySelector('input[type="text"]');
+                                        if (form && img && input) {
+                                            return {found: true, formId: form.id, imgSrc: img.src, inputName: input.name};
+                                        }
+                                        return {found: false};
+                                    }""")
+                                    if broad_captcha.get('found'):
+                                        session.log(f"🔍 Broad captcha detection found form! formId={broad_captcha.get('formId')} imgSrc={broad_captcha.get('imgSrc','')[:60]}")
+                                        # Re-check with the actual selectors that exist
+                                        has_captcha = True
+                                        continue  # Retry the captcha solve with updated detection
+
                                 page.reload(wait_until="domcontentloaded")
                                 time.sleep(5)
                                 continue
@@ -571,8 +624,12 @@ def run_nreer_tab(session, tab_id):
                             session.log(f"🔐 Solving captcha (attempt {captcha_attempt + 1})...")
                             time.sleep(1)
 
-                            # Screenshot the captcha image
+                            # Screenshot the captcha image (try specific then broad selector)
                             captcha_img = page.locator('img[src*="captcha"]')
+                            if captcha_img.count() == 0:
+                                captcha_img = page.locator('form#cat img')
+                            if captcha_img.count() == 0:
+                                captcha_img = page.locator('img.card-img-top')
                             captcha_bytes = captcha_img.first.screenshot()
                             answer = solve_captcha(captcha_bytes)
 
@@ -584,15 +641,22 @@ def run_nreer_tab(session, tab_id):
 
                             session.log(f"🔤 Answer: '{answer}'")
 
-                            # Fill and submit via JS (form submit button has no ref)
+                            # Fill and submit via JS (try multiple selectors)
                             page.evaluate(f"""() => {{
-                                const input = document.querySelector('input[name="captcha"]');
+                                const input = document.querySelector('input[name="captcha"]') || document.querySelector('form#cat input[type="text"]') || document.querySelector('form input[type="text"]');
                                 if (input) {{
+                                    input.value = '';
+                                    input.focus();
                                     input.value = '{answer}';
                                     input.dispatchEvent(new Event('input', {{bubbles: true}}));
+                                    input.dispatchEvent(new Event('change', {{bubbles: true}}));
                                 }}
-                                const btn = document.querySelector('form#cat button[type="submit"]');
+                                const btn = document.querySelector('form#cat button[type="submit"]') || document.querySelector('form button[type="submit"]');
                                 if (btn) btn.click();
+                                else {{
+                                    const form = document.querySelector('form#cat') || document.querySelector('form');
+                                    if (form) form.submit();
+                                }}
                             }}""")
                             time.sleep(4)
 
