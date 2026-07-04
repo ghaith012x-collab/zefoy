@@ -684,36 +684,6 @@ def run_tab(session, tab_id):
                                         }
                                     }
 
-                                    if (lower.includes('successfully')) {
-                                        let count = 0;
-                                        const lines = body.split('\\n');
-                                        let successLine = '';
-                                        for (const line of lines) {
-                                            if (line.toLowerCase().includes('successfully')) {
-                                                successLine = line;
-                                                break;
-                                            }
-                                        }
-                                        // Log the raw success line for debugging
-                                        console.log('ZEFOY_SUCCESS_RAW: ' + successLine);
-                                        if (successLine) {
-                                            const lineNums = successLine.match(/\\d+/g);
-                                            if (lineNums) {
-                                                // Filter out year-like numbers (2020-2035), month/day (1-31 only if line has date-like pattern)
-                                                const hasDate = /\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4}|\\d{4}[\\/-]\\d{1,2}|[A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4}/.test(successLine);
-                                                const filtered = lineNums.map(Number).filter(n => {
-                                                    if (n >= 2020 && n <= 2035) return false; // year
-                                                    if (n > 100000) return false; // unreasonably large
-                                                    return true;
-                                                });
-                                                if (filtered.length > 0) {
-                                                    count = Math.max(...filtered);
-                                                }
-                                            }
-                                        }
-                                        return {type: 'success', count: count, rawLine: successLine};
-                                    }
-
                                     const spinners = document.querySelectorAll('.fa-spinner, .fa-spin, .spinner, [class*="loading"], [class*="spin"]');
                                     for (const s of spinners) {
                                         if (s.offsetParent !== null) return {type: 'loading'};
@@ -752,6 +722,32 @@ def run_tab(session, tab_id):
                                         }
                                     }
 
+                                    if (lower.includes('successfully')) {
+                                        let count = 0;
+                                        const lines = body.split('\n');
+                                        let successLine = '';
+                                        for (const line of lines) {
+                                            if (line.toLowerCase().includes('successfully')) {
+                                                successLine = line;
+                                                break;
+                                            }
+                                        }
+                                        if (successLine) {
+                                            const lineNums = successLine.match(/\\d+/g);
+                                            if (lineNums) {
+                                                const filtered = lineNums.map(Number).filter(n => {
+                                                    if (n >= 2020 && n <= 2035) return false;
+                                                    if (n > 100000) return false;
+                                                    return true;
+                                                });
+                                                if (filtered.length > 0) {
+                                                    count = Math.max(...filtered);
+                                                }
+                                            }
+                                        }
+                                        return {type: 'success', count: count, rawLine: successLine};
+                                    }
+
                                     if (lower.includes('please wait') && (lower.includes('minute') || lower.includes('second'))) {
                                         return {type: 'ratelimit', text: body.substring(0, 500)};
                                     }
@@ -776,6 +772,12 @@ def run_tab(session, tab_id):
                                 if wait_secs <= 0:
                                     wait_secs = 60
                                 wait_secs += 5
+
+                                if wait_secs > 30:
+                                    session.log(f"\u23f3 Rate limited ({wait_secs}s) — rotating IP instead of waiting...")
+                                    session.set_countdown("")
+                                    break  # restart with fresh browser + new Tor circuit
+
                                 session.log(f"\u23f3 Rate limited ({wait_secs}s)")
 
                                 for remaining in range(wait_secs, 0, -1):
@@ -853,7 +855,6 @@ def run_tab(session, tab_id):
                                         if "successfully" in body.lower():
                                             for line in body.split('\n'):
                                                 if 'successfully' in line.lower():
-                                                    line_nums = [int(n) for n in re.findall(r'\d+', line) if 2020 <= int(n) <= 2035 is False and int(n) < 100000]
                                                     line_nums = [n for n in [int(x) for x in re.findall(r'\d+', line)] if not (2020 <= n <= 2035) and n < 100000]
                                                     if line_nums:
                                                         count = max(line_nums)
