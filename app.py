@@ -889,6 +889,13 @@ def run_tab(session, tab_id):
                                 continue
 
                             else:
+                                if check_round % 10 == 9:
+                                    # Log page snippet every 10 checks so we can debug
+                                    try:
+                                        snippet = page.evaluate("document.body.innerText.substring(0, 300)")
+                                        session.log(f"🔍 Page state (check {check_round}): {snippet[:150]}")
+                                    except:
+                                        pass
                                 if check_round < 30:
                                     time.sleep(1)
                                     continue
