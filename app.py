@@ -9,7 +9,7 @@ import numpy as np
 # Thread-local tab prefix for log messages
 _tab_prefix = threading.local()
 
-# Global limit: max 5 Chromium browsers across ALL sessions at once
+# Global limit: max 3 Chromium browsers across ALL sessions at once
 MAX_GLOBAL_BROWSERS = 5
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
@@ -53,13 +53,15 @@ SERVICES = {
         "button_class": "t-views-button",
         "menu_class": "t-views-menu",
         "unit": "views",
+        "engine": "zefoy",
     },
-    "hearts": {
-        "name": "Hearts",
-        "emoji": "❤️",
-        "button_class": "t-hearts-button",
-        "menu_class": "t-hearts-menu",
+    "comment_hearts": {
+        "name": "Comment Hearts",
+        "emoji": "💬",
+        "button_class": "t-chearts-button",
+        "menu_class": "t-chearts-menu",
         "unit": "hearts",
+        "engine": "zefoy",
     },
     "shares": {
         "name": "Shares",
@@ -67,6 +69,7 @@ SERVICES = {
         "button_class": "t-shares-button",
         "menu_class": "t-shares-menu",
         "unit": "shares",
+        "engine": "zefoy",
     },
     "favorites": {
         "name": "Favorites",
@@ -74,6 +77,7 @@ SERVICES = {
         "button_class": "t-favorites-button",
         "menu_class": "t-favorites-menu",
         "unit": "favorites",
+        "engine": "zefoy",
     },
     "followers": {
         "name": "Followers",
@@ -81,11 +85,18 @@ SERVICES = {
         "button_class": "t-followers-button",
         "menu_class": "t-followers-menu",
         "unit": "followers",
+        "engine": "zefoy",
+    },
+    "nreer_hearts": {
+        "name": "Nreer Hearts",
+        "emoji": "💖",
+        "unit": "hearts",
+        "engine": "nreer",
     },
 }
 
 # CSS selector that matches ANY service button (used for captcha-solved check)
-ANY_SERVICE_BUTTON = ", ".join(f".{s['button_class']}" for s in SERVICES.values())
+ANY_SERVICE_BUTTON = ", ".join(f".{s['button_class']}" for s in SERVICES.values() if 'button_class' in s)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -283,7 +294,7 @@ class Session:
             self.id = Session._counter
         self.video_url = video_url
         self.service = service  # key into SERVICES dict
-        self.num_tabs = max(1, min(num_tabs, 3))  # clamp 1-3
+        self.num_tabs = max(1, min(num_tabs, 5))  # clamp 1-5
         self.status = "starting"
         self.total_count = 0
         self.cycles = 0
@@ -349,14 +360,18 @@ def run_session(session):
     svc_name = session.svc["name"]
     nt = session.num_tabs
 
+    # Pick the right engine
+    engine = session.svc.get("engine", "zefoy")
+    tab_func = run_nreer_tab if engine == "nreer" else run_tab
+
     if nt <= 1:
         session.log(f"🚀 Launching browser ({svc_name} mode)...")
-        run_tab(session, 0)
+        tab_func(session, 0)
     else:
         session.log(f"🚀 Launching {nt} tabs ({svc_name} mode)...")
         threads = []
         for tab_id in range(nt):
-            t = threading.Thread(target=run_tab, args=(session, tab_id), daemon=True)
+            t = threading.Thread(target=tab_func, args=(session, tab_id), daemon=True)
             t.start()
             threads.append(t)
             time.sleep(5)  # stagger launches to reduce memory spikes
@@ -366,6 +381,542 @@ def run_session(session):
     if session.status == "running":
         session.log("🛑 Session stopped.")
         session.status = "stopped"
+
+
+# ═══════════════════════════════════════════════════════════════
+#  NREER ENGINE
+# ═══════════════════════════════════════════════════════════════
+
+# Gambling/ad domains to block on Nreer
+NREER_BLOCKED_DOMAINS = [
+    "betonline.ag", "stake.com", "stake.us", "1xbet.com", "bet365.com",
+    "betway.com", "bovada.lv", "mybookie.ag", "sportsbetting.ag",
+    "cloudbet.com", "bc.game", "rollbit.com", "roobet.com",
+    "gamdom.com", "csgoroll.com", "duelbits.com",
+]
+
+def run_nreer_tab(session, tab_id):
+    """Nreer Hearts engine — separate flow from Zefoy."""
+    import gc
+    svc = session.svc
+    svc_name = svc["name"]
+    emoji = svc.get("emoji", "💖")
+    unit = svc.get("unit", "hearts")
+    prefix = f"[T{tab_id + 1}] " if session.num_tabs > 1 else ""
+    _tab_prefix.value = prefix
+
+    tor_port = 9050 + tab_id
+    NREER_URL = "https://nreer.com"
+
+    while not session.stop_event.is_set():
+        browser = None
+        try:
+            with _browser_semaphore:
+                if session.stop_event.is_set():
+                    return
+
+                session.log(f"🟢 Browser slot acquired ({_browser_semaphore._value + 1 if hasattr(_browser_semaphore, '_value') else '?'}/{MAX_GLOBAL_BROWSERS} in use)")
+                session.log(f"🧦 Routing through Tor (port {tor_port})...")
+                session.active_tabs += 1
+
+                with sync_playwright() as pw:
+                    proxy_config = {"server": f"socks5://127.0.0.1:{tor_port}"}
+
+                    browser = pw.chromium.launch(
+                        headless=True,
+                        proxy=proxy_config,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--disable-extensions",
+                            "--disable-background-timer-throttling",
+                            "--single-process",
+                        ]
+                    )
+
+                    context = browser.new_context(
+                        viewport={"width": 1280, "height": 800},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        locale="en-US",
+                    )
+                    context.set_default_timeout(30000)
+                    page = context.new_page()
+
+                    # Block gambling/ad redirects
+                    def _block_ads(route):
+                        url = route.request.url.lower()
+                        for domain in NREER_BLOCKED_DOMAINS:
+                            if domain in url:
+                                session.log(f"🚫 Blocked redirect: {domain}")
+                                route.abort()
+                                return
+                        route.continue_()
+
+                    page.route("**/*", _block_ads)
+
+                    # Close any popups/new tabs
+                    def _close_popup(popup):
+                        try:
+                            popup_url = popup.url.lower()
+                            if "nreer.com" not in popup_url:
+                                session.log(f"🚫 Closed popup: {popup_url[:60]}")
+                                popup.close()
+                        except:
+                            pass
+                    context.on("page", _close_popup)
+
+                    def _safe_check(p):
+                        try:
+                            p.evaluate("1+1")
+                            return True
+                        except:
+                            return False
+
+                    # ── Load Nreer ──
+                    session.log("🌐 Loading nreer.com...")
+                    page.goto(NREER_URL, wait_until="domcontentloaded", timeout=60000)
+                    time.sleep(3)
+
+                    if not _safe_check(page):
+                        session.log("💥 Page crashed on load, restarting...")
+                        continue
+
+                    # ── Solve captcha ──
+                    session.log("🔐 Checking for captcha...")
+
+                    captcha_solved = False
+                    for captcha_attempt in range(20):
+                        if session.stop_event.is_set():
+                            return
+
+                        if not _safe_check(page):
+                            session.log("💥 Crashed during captcha, restarting...")
+                            break
+
+                        try:
+                            # Check if captcha is present
+                            has_captcha = page.evaluate("""() => {
+                                const img = document.querySelector('img[src*="captcha"]');
+                                const input = document.querySelector('input[name="captcha"]');
+                                return !!(img && input);
+                            }""")
+
+                            if not has_captcha:
+                                # Check if we're already past captcha (dashboard visible)
+                                has_dashboard = page.evaluate("""() => {
+                                    const body = document.body.innerText.toLowerCase();
+                                    return body.includes('hearts') && (body.includes('use') || body.includes('favorites'));
+                                }""")
+                                if has_dashboard:
+                                    session.log("✅ No captcha needed — dashboard already visible")
+                                    captcha_solved = True
+                                    break
+
+                                # Check for "try again later"
+                                page_text = page.evaluate("document.body.innerText.substring(0, 300)")
+                                if "try again" in page_text.lower():
+                                    session.log("⚠️ Nreer says 'try again later', rotating IP...")
+                                    break
+
+                                session.log(f"⚠️ Page not ready (attempt {captcha_attempt + 1}/20)...")
+                                page.reload(wait_until="domcontentloaded")
+                                time.sleep(5)
+                                continue
+
+                            session.log(f"🔐 Solving captcha (attempt {captcha_attempt + 1})...")
+                            time.sleep(1)
+
+                            # Screenshot the captcha image
+                            captcha_img = page.locator('img[src*="captcha"]')
+                            captcha_bytes = captcha_img.first.screenshot()
+                            answer = solve_captcha(captcha_bytes)
+
+                            if not answer:
+                                session.log("⚠️ OCR failed, reloading page...")
+                                page.reload(wait_until="domcontentloaded")
+                                time.sleep(3)
+                                continue
+
+                            session.log(f"🔤 Answer: '{answer}'")
+
+                            # Fill and submit via JS (form submit button has no ref)
+                            page.evaluate(f"""() => {{
+                                const input = document.querySelector('input[name="captcha"]');
+                                if (input) {{
+                                    input.value = '{answer}';
+                                    input.dispatchEvent(new Event('input', {{bubbles: true}}));
+                                }}
+                                const btn = document.querySelector('form#cat button[type="submit"]');
+                                if (btn) btn.click();
+                            }}""")
+                            time.sleep(4)
+
+                            # Check if dashboard appeared
+                            result = page.evaluate("""() => {
+                                const body = document.body.innerText.toLowerCase();
+                                if (body.includes('try again')) return 'retry';
+                                if (body.includes('hearts') && (body.includes('use') || body.includes('favorites'))) return 'ok';
+                                return 'unknown';
+                            }""")
+
+                            if result == 'ok':
+                                session.log("✅ Captcha solved!")
+                                captcha_solved = True
+                                break
+                            elif result == 'retry':
+                                session.log(f"❌ Wrong answer '{answer}', reloading...")
+                                page.reload(wait_until="domcontentloaded")
+                                time.sleep(3)
+                            else:
+                                session.log(f"❌ Wrong answer '{answer}', retrying...")
+                                time.sleep(2)
+                                page.reload(wait_until="domcontentloaded")
+                                time.sleep(3)
+
+                        except Exception as e:
+                            err_str = str(e).lower()
+                            if "crash" in err_str or "target closed" in err_str:
+                                session.log("💥 Crashed during captcha, restarting...")
+                                break
+                            session.log(f"⚠️ Captcha error: {e}")
+                            time.sleep(2)
+
+                    if not captcha_solved:
+                        continue
+
+                    # ── Click "Use" on Hearts service ──
+                    session.log(f"{emoji} Looking for Hearts service...")
+
+                    try:
+                        # Click the first "Use" button (Hearts panel)
+                        use_clicked = page.evaluate("""() => {
+                            const buttons = document.querySelectorAll('button');
+                            for (const btn of buttons) {
+                                if (btn.innerText.trim().toLowerCase().includes('use')) {
+                                    // Find parent card/container
+                                    let parent = btn.closest('.card, .col, [class*="col"]') || btn.parentElement;
+                                    let parentText = parent?.innerText?.toLowerCase() || '';
+                                    if (parentText.includes('heart')) {
+                                        btn.click();
+                                        return 'clicked_hearts';
+                                    }
+                                }
+                            }
+                            // Fallback: click first Use button
+                            const firstUse = document.querySelector('button');
+                            for (const btn of buttons) {
+                                if (btn.innerText.trim().toLowerCase().includes('use') && !btn.closest('[class*="membership"]')) {
+                                    btn.click();
+                                    return 'clicked_first';
+                                }
+                            }
+                            return 'not_found';
+                        }""")
+
+                        if use_clicked == 'not_found':
+                            session.log("❌ 'Use' button not found, restarting...")
+                            continue
+
+                        session.log(f"✅ Clicked {use_clicked}")
+                        time.sleep(3)
+
+                    except Exception as e:
+                        session.log(f"⚠️ Error clicking Use: {e}")
+                        continue
+
+                    # ── Main loop ──
+                    zero_streak = 0
+                    MAX_ZERO_STREAK = 10
+
+                    while not session.stop_event.is_set():
+                        if not _safe_check(page):
+                            session.log("💥 Page crashed, restarting...")
+                            break
+
+                        cycle = session.add_cycle()
+                        session.log(f"🔄 Cycle {cycle}")
+
+                        try:
+                            # Check page state
+                            state = page.evaluate("""() => {
+                                const body = document.body.innerText;
+                                const lower = body.toLowerCase();
+
+                                // Check for countdown timer
+                                const minEl = document.querySelector('[class*="min"], [id*="min"]');
+                                const secEl = document.querySelector('[class*="sec"], [id*="sec"]');
+                                if (minEl && secEl) {
+                                    const minText = minEl.innerText.trim();
+                                    const secText = secEl.innerText.trim();
+                                    if (/^\\d+$/.test(minText) && /^\\d+$/.test(secText)) {
+                                        return {type: 'timer', mins: parseInt(minText), secs: parseInt(secText)};
+                                    }
+                                }
+
+                                // Broad timer check in body text
+                                const timerMatch = body.match(/(\\d+)\\s*Min\\D*(\\d+)\\s*Sec/i);
+                                if (timerMatch) {
+                                    return {type: 'timer', mins: parseInt(timerMatch[1]), secs: parseInt(timerMatch[2])};
+                                }
+
+                                // Check for URL input form
+                                const urlInput = document.querySelector('input[placeholder*="URL"], input[type="search"]');
+                                const searchBtn = document.querySelector('button');
+                                let hasSearch = false;
+                                if (searchBtn) {
+                                    const btns = document.querySelectorAll('button');
+                                    for (const b of btns) {
+                                        if (b.innerText.toLowerCase().includes('search')) hasSearch = true;
+                                    }
+                                }
+                                if (urlInput && hasSearch) {
+                                    return {type: 'form_ready'};
+                                }
+
+                                // Check for success modal
+                                const modal = document.querySelector('.modal.show, .modal.fade.show, [role="dialog"]');
+                                if (modal) {
+                                    const modalText = modal.innerText;
+                                    if (modalText.toLowerCase().includes('success')) {
+                                        const nums = modalText.match(/\\d+/g);
+                                        const count = nums ? Math.max(...nums.map(Number).filter(n => n < 100000 && !(n >= 2020 && n <= 2035))) : 0;
+                                        return {type: 'success', count: count || 0, text: modalText.substring(0, 200)};
+                                    }
+                                    if (modalText.toLowerCase().includes('not found') || modalText.toLowerCase().includes('error') || modalText.toLowerCase().includes('ops')) {
+                                        return {type: 'error', text: modalText.substring(0, 200)};
+                                    }
+                                }
+
+                                // Check for Use buttons (back to dashboard)
+                                const btns = document.querySelectorAll('button');
+                                for (const b of btns) {
+                                    if (b.innerText.toLowerCase().includes('use')) return {type: 'dashboard'};
+                                }
+
+                                return {type: 'unknown', snippet: body.substring(0, 200)};
+                            }""")
+
+                            state_type = state.get('type', 'unknown')
+
+                            if state_type == 'timer':
+                                total_secs = state.get('mins', 0) * 60 + state.get('secs', 0)
+                                if total_secs > 0:
+                                    mins = total_secs // 60
+                                    secs = total_secs % 60
+                                    session.log(f"⏳ Rate limited: {mins}m {secs}s remaining")
+                                    session.set_countdown(f"⏳ {mins}:{secs:02d} remaining")
+
+                                    if total_secs > 90:
+                                        # Long wait — rotate IP
+                                        session.log("🔄 Long cooldown, rotating IP...")
+                                        session.set_countdown("")
+                                        break
+                                    else:
+                                        # Short wait — just wait it out
+                                        time.sleep(total_secs + 5)
+                                        session.set_countdown("")
+                                        # After timer, page should show form or dashboard
+                                        # Reload to get fresh state
+                                        page.reload(wait_until="domcontentloaded")
+                                        time.sleep(3)
+                                        continue
+
+                            elif state_type == 'form_ready':
+                                # Fill URL and submit
+                                session.log(f"{emoji} Sending {unit}...")
+                                try:
+                                    page.evaluate(f"""() => {{
+                                        const input = document.querySelector('input[placeholder*="URL"], input[type="search"]');
+                                        if (input) {{
+                                            input.value = '';
+                                            input.value = '{session.video_url}';
+                                            input.dispatchEvent(new Event('input', {{bubbles: true}}));
+                                        }}
+                                        const btns = document.querySelectorAll('button');
+                                        for (const b of btns) {{
+                                            if (b.innerText.toLowerCase().includes('search')) {{
+                                                b.click();
+                                                break;
+                                            }}
+                                        }}
+                                    }}""")
+                                    time.sleep(5)
+
+                                    # Check result
+                                    result = page.evaluate("""() => {
+                                        const body = document.body.innerText;
+                                        const lower = body.toLowerCase();
+
+                                        // Check for modal
+                                        const modal = document.querySelector('.modal.show, .modal.fade.show, [role="dialog"]');
+                                        if (modal) {
+                                            const text = modal.innerText;
+                                            const tl = text.toLowerCase();
+                                            if (tl.includes('success')) {
+                                                const nums = text.match(/\\d+/g);
+                                                const count = nums ? Math.max(...nums.map(Number).filter(n => n < 100000 && !(n >= 2020 && n <= 2035))) : 0;
+                                                return {type: 'success', count: count || 0, text: text.substring(0, 200)};
+                                            }
+                                            return {type: 'error', text: text.substring(0, 200)};
+                                        }
+
+                                        // Check for timer (rate limit after submission)
+                                        const timerMatch = body.match(/(\\d+)\\s*Min\\D*(\\d+)\\s*Sec/i);
+                                        if (timerMatch) {
+                                            return {type: 'timer_after', mins: parseInt(timerMatch[1]), secs: parseInt(timerMatch[2])};
+                                        }
+
+                                        // Check for success text in body
+                                        if (lower.includes('success')) {
+                                            const nums = body.match(/\\d+/g);
+                                            const count = nums ? Math.max(...nums.map(Number).filter(n => n < 100000 && !(n >= 2020 && n <= 2035))) : 0;
+                                            return {type: 'success', count: count || 0, text: body.substring(0, 200)};
+                                        }
+
+                                        return {type: 'unknown', text: body.substring(0, 300)};
+                                    }""")
+
+                                    result_type = result.get('type', 'unknown')
+
+                                    if result_type == 'success':
+                                        count = result.get('count', 0)
+                                        new_total = session.add_count(count)
+                                        if count > 0:
+                                            zero_streak = 0
+                                            session.log(f"🎉 +{count} {unit}! Total: {new_total:,}")
+                                        else:
+                                            zero_streak += 1
+                                            session.log(f"⚠️ Nreer returned 0 {unit} (streak: {zero_streak}/{MAX_ZERO_STREAK})")
+                                        # Dismiss modal if present
+                                        try:
+                                            page.evaluate("""() => {
+                                                const close = document.querySelector('.modal .close, .modal .btn-secondary, [data-dismiss="modal"]');
+                                                if (close) close.click();
+                                            }""")
+                                        except:
+                                            pass
+                                        time.sleep(2)
+
+                                    elif result_type == 'error':
+                                        error_text = result.get('text', '')
+                                        session.log(f"❌ Error: {error_text[:100]}")
+                                        # Dismiss modal
+                                        try:
+                                            page.evaluate("""() => {
+                                                const close = document.querySelector('.modal .close, .modal .btn-secondary, [data-dismiss="modal"]');
+                                                if (close) close.click();
+                                            }""")
+                                        except:
+                                            pass
+                                        time.sleep(2)
+                                        if 'not found' in error_text.lower():
+                                            session.log("⚠️ Video not found — check your URL")
+                                            # Don't break, let user fix URL or keep trying
+
+                                    elif result_type == 'timer_after':
+                                        total_secs = result.get('mins', 0) * 60 + result.get('secs', 0)
+                                        session.log(f"⏳ Cooldown after submit: {result.get('mins', 0)}m {result.get('secs', 0)}s")
+                                        # Assume hearts were sent, count as success
+                                        new_total = session.add_count(0)
+                                        if total_secs > 90:
+                                            session.log("🔄 Long cooldown, rotating IP...")
+                                            break
+                                        else:
+                                            session.set_countdown(f"⏳ {result.get('mins', 0)}:{result.get('secs', 0):02d}")
+                                            time.sleep(total_secs + 5)
+                                            session.set_countdown("")
+                                    else:
+                                        session.log(f"🔍 Unknown result: {result.get('text', '')[:100]}")
+                                        time.sleep(3)
+
+                                except Exception as send_err:
+                                    err_str = str(send_err).lower()
+                                    if "crash" in err_str or "target closed" in err_str:
+                                        session.log("💥 Crashed sending, restarting...")
+                                        break
+                                    session.log(f"⚠️ Send error: {send_err}")
+                                    time.sleep(3)
+
+                            elif state_type == 'success':
+                                count = state.get('count', 0)
+                                new_total = session.add_count(count)
+                                if count > 0:
+                                    session.log(f"🎉 +{count} {unit}! Total: {new_total:,}")
+                                else:
+                                    session.log(f"⚠️ 0 {unit} returned")
+                                try:
+                                    page.evaluate("document.querySelector('.modal .close, [data-dismiss=\"modal\"]')?.click()")
+                                except:
+                                    pass
+                                time.sleep(2)
+
+                            elif state_type == 'error':
+                                session.log(f"❌ {state.get('text', 'Unknown error')[:100]}")
+                                try:
+                                    page.evaluate("document.querySelector('.modal .close, [data-dismiss=\"modal\"]')?.click()")
+                                except:
+                                    pass
+                                time.sleep(3)
+
+                            elif state_type == 'dashboard':
+                                # Need to click "Use" again
+                                session.log(f"{emoji} Re-clicking Use button...")
+                                page.evaluate("""() => {
+                                    const buttons = document.querySelectorAll('button');
+                                    for (const btn of buttons) {
+                                        if (btn.innerText.trim().toLowerCase().includes('use')) {
+                                            let parent = btn.closest('.card, .col, [class*="col"]') || btn.parentElement;
+                                            let parentText = parent?.innerText?.toLowerCase() || '';
+                                            if (parentText.includes('heart')) {
+                                                btn.click();
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    // Fallback: first non-membership Use button
+                                    for (const btn of buttons) {
+                                        if (btn.innerText.trim().toLowerCase().includes('use') && !btn.closest('[class*="membership"]')) {
+                                            btn.click();
+                                            return;
+                                        }
+                                    }
+                                }""")
+                                time.sleep(3)
+
+                            else:
+                                snippet = state.get('snippet', state.get('text', ''))[:100]
+                                session.log(f"🔍 Unknown state: {snippet}")
+                                time.sleep(3)
+
+                        except Exception as eval_err:
+                            err_str = str(eval_err).lower()
+                            if "crash" in err_str or "target closed" in err_str:
+                                session.log("💥 Crashed in main loop, restarting...")
+                                break
+                            session.log(f"⚠️ Error: {eval_err}")
+                            time.sleep(3)
+
+                        time.sleep(2)
+                        if cycle % 10 == 0:
+                            gc.collect()
+
+        except Exception as outer_err:
+            session.log(f"💥 Fatal error: {outer_err}")
+        finally:
+            if browser:
+                try:
+                    browser.close()
+                except:
+                    pass
+            session.active_tabs = max(0, session.active_tabs - 1)
+
+        if session.stop_event.is_set():
+            return
+
+        # Wait before retry — new browser gets new Tor circuit
+        session.log("🔄 Restarting with fresh Tor circuit...")
+        time.sleep(5)
 
 
 def run_tab(session, tab_id):
@@ -684,6 +1235,36 @@ def run_tab(session, tab_id):
                                         }
                                     }
 
+                                    if (lower.includes('successfully')) {
+                                        let count = 0;
+                                        const lines = body.split('\\n');
+                                        let successLine = '';
+                                        for (const line of lines) {
+                                            if (line.toLowerCase().includes('successfully')) {
+                                                successLine = line;
+                                                break;
+                                            }
+                                        }
+                                        // Log the raw success line for debugging
+                                        console.log('ZEFOY_SUCCESS_RAW: ' + successLine);
+                                        if (successLine) {
+                                            const lineNums = successLine.match(/\\d+/g);
+                                            if (lineNums) {
+                                                // Filter out year-like numbers (2020-2035), month/day (1-31 only if line has date-like pattern)
+                                                const hasDate = /\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4}|\\d{4}[\\/-]\\d{1,2}|[A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4}/.test(successLine);
+                                                const filtered = lineNums.map(Number).filter(n => {
+                                                    if (n >= 2020 && n <= 2035) return false; // year
+                                                    if (n > 100000) return false; // unreasonably large
+                                                    return true;
+                                                });
+                                                if (filtered.length > 0) {
+                                                    count = Math.max(...filtered);
+                                                }
+                                            }
+                                        }
+                                        return {type: 'success', count: count, rawLine: successLine};
+                                    }
+
                                     const spinners = document.querySelectorAll('.fa-spinner, .fa-spin, .spinner, [class*="loading"], [class*="spin"]');
                                     for (const s of spinners) {
                                         if (s.offsetParent !== null) return {type: 'loading'};
@@ -722,32 +1303,6 @@ def run_tab(session, tab_id):
                                         }
                                     }
 
-                                    if (lower.includes('successfully')) {
-                                        let count = 0;
-                                        const lines = body.split('\n');
-                                        let successLine = '';
-                                        for (const line of lines) {
-                                            if (line.toLowerCase().includes('successfully')) {
-                                                successLine = line;
-                                                break;
-                                            }
-                                        }
-                                        if (successLine) {
-                                            const lineNums = successLine.match(/\\d+/g);
-                                            if (lineNums) {
-                                                const filtered = lineNums.map(Number).filter(n => {
-                                                    if (n >= 2020 && n <= 2035) return false;
-                                                    if (n > 100000) return false;
-                                                    return true;
-                                                });
-                                                if (filtered.length > 0) {
-                                                    count = Math.max(...filtered);
-                                                }
-                                            }
-                                        }
-                                        return {type: 'success', count: count, rawLine: successLine};
-                                    }
-
                                     if (lower.includes('please wait') && (lower.includes('minute') || lower.includes('second'))) {
                                         return {type: 'ratelimit', text: body.substring(0, 500)};
                                     }
@@ -772,13 +1327,6 @@ def run_tab(session, tab_id):
                                 if wait_secs <= 0:
                                     wait_secs = 60
                                 wait_secs += 5
-
-                                if wait_secs > 30:
-                                    session.log(f"\u23f3 Rate limited ({wait_secs}s) — rotating IP...")
-                                    session.set_countdown("")
-                                    crashed_in_check = True  # force browser restart + new Tor circuit
-                                    break
-
                                 session.log(f"\u23f3 Rate limited ({wait_secs}s)")
 
                                 for remaining in range(wait_secs, 0, -1):
@@ -856,6 +1404,7 @@ def run_tab(session, tab_id):
                                         if "successfully" in body.lower():
                                             for line in body.split('\n'):
                                                 if 'successfully' in line.lower():
+                                                    line_nums = [int(n) for n in re.findall(r'\d+', line) if not (2020 <= int(n) <= 2035) and int(n) < 100000]
                                                     line_nums = [n for n in [int(x) for x in re.findall(r'\d+', line)] if not (2020 <= n <= 2035) and n < 100000]
                                                     if line_nums:
                                                         count = max(line_nums)
@@ -889,13 +1438,6 @@ def run_tab(session, tab_id):
                                 continue
 
                             else:
-                                if check_round % 10 == 9:
-                                    # Log page snippet every 10 checks so we can debug
-                                    try:
-                                        snippet = page.evaluate("document.body.innerText.substring(0, 300)")
-                                        session.log(f"🔍 Page state (check {check_round}): {snippet[:150]}")
-                                    except:
-                                        pass
                                 if check_round < 30:
                                     time.sleep(1)
                                     continue
@@ -1117,16 +1659,6 @@ def remove_session(sid):
             return jsonify({"error": "Can only remove stopped sessions"}), 400
         del sessions[sid]
     return jsonify({"ok": True})
-
-
-@app.route("/debug/<int:sid>")
-def debug_logs(sid):
-    """Return last 100 log entries for a session."""
-    with sessions_lock:
-        session = sessions.get(sid)
-        if not session:
-            return jsonify({"error": "Not found"}), 404
-        return jsonify({"id": sid, "logs": session.logs[-100:], "cycles": session.cycles, "count": session.total_count})
 
 
 if __name__ == "__main__":

@@ -30,10 +30,11 @@ body { background:#0a0a1a; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-
 .card-id { font-weight:700; color:#a78bfa; font-size:1.1rem; }
 .card-badge { padding:2px 10px; border-radius:99px; font-size:0.75rem; font-weight:600; text-transform:uppercase; }
 .badge-views { background:#6d28d9; color:#fff; }
-.badge-hearts { background:#e11d48; color:#fff; }
+.badge-comment_hearts { background:#7c3aed; color:#fff; }
 .badge-shares { background:#0891b2; color:#fff; }
 .badge-favorites { background:#d97706; color:#fff; }
 .badge-followers { background:#059669; color:#fff; }
+.badge-nreer_hearts { background:#ec4899; color:#fff; }
 .card-stats { font-size:0.85rem; color:#bbb; margin-bottom:4px; }
 .card-stats span { margin-right:12px; }
 .card-stats .count { color:#34d399; font-weight:700; }
@@ -78,10 +79,11 @@ body { background:#0a0a1a; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-
     <div class="control-row">
         <select id="serviceSelect">
             <option value="views">👁️ Views</option>
-            <option value="hearts">❤️ Hearts</option>
+            <option value="comment_hearts">💬 Comment Hearts</option>
             <option value="shares">🔄 Shares</option>
             <option value="favorites">⭐ Favorites</option>
             <option value="followers">👥 Followers</option>
+            <option value="nreer_hearts">💖 Nreer Hearts</option>
         </select>
         <input type="text" id="urlInput" placeholder="Paste TikTok URL...">
         <div class="tabs-group">
@@ -97,10 +99,10 @@ body { background:#0a0a1a; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-
 <script>
 const sessionsEl = document.getElementById('sessions');
 const globalStats = document.getElementById('globalStats');
-const cards = {};  // sid → DOM elements
+const cards = {};
 const MAX_LOG_LINES = 200;
 
-const BADGE_CLASS = {views:'badge-views',hearts:'badge-hearts',shares:'badge-shares',favorites:'badge-favorites',followers:'badge-followers'};
+const BADGE_CLASS = {views:'badge-views',comment_hearts:'badge-comment_hearts',shares:'badge-shares',favorites:'badge-favorites',followers:'badge-followers',nreer_hearts:'badge-nreer_hearts'};
 
 function startSession() {
     const url = document.getElementById('urlInput').value.trim();
@@ -179,11 +181,9 @@ function removeSession(sid) {
 }
 
 function colorizeLog(text) {
-    // Highlight tab prefixes like [T1], [T2], etc.
     return text.replace(/\[T(\d+)\]\s*/g, '<span class="tab-prefix">[T$1]</span> ');
 }
 
-// ─── SSE: single multiplexed stream ───
 const evtSource = new EventSource('/stream/all');
 
 evtSource.onmessage = function(e) {
@@ -191,7 +191,6 @@ evtSource.onmessage = function(e) {
     const sid = msg.sid;
     const c = cards[sid];
 
-    // If we don't have a card for this session yet, fetch it
     if (!c) {
         fetch('/sessions').then(r => r.json()).then(data => {
             (data.sessions || data).forEach(s => {
@@ -209,7 +208,6 @@ evtSource.onmessage = function(e) {
             line.innerHTML = colorizeLog(escapeHtml(msg.text));
             c.log.appendChild(line);
             c.logCount++;
-            // Cap log lines
             while (c.logCount > MAX_LOG_LINES) {
                 c.log.removeChild(c.log.firstChild);
                 c.logCount--;
@@ -243,11 +241,10 @@ evtSource.onmessage = function(e) {
             break;
     }
 
-    // Update global stats
     updateGlobalStats();
 };
 
-let _globalBrowsers = 0, _maxBrowsers = 3;
+let _globalBrowsers = 0, _maxBrowsers = 5;
 function updateGlobalStats() {
     let active = 0, total = 0;
     for (const sid in cards) {
@@ -257,7 +254,6 @@ function updateGlobalStats() {
     }
     globalStats.textContent = `Active: ${active}   Total: ${total}   🌐 Browsers: ${_globalBrowsers}/${_maxBrowsers}`;
 }
-// Periodically refresh browser count
 setInterval(() => {
     fetch('/sessions').then(r => r.json()).then(data => {
         if (data.browsers !== undefined) _globalBrowsers = data.browsers;
@@ -272,7 +268,6 @@ function escapeHtml(text) {
     return d.innerHTML;
 }
 
-// Load existing sessions on page load
 fetch('/sessions').then(r => r.json()).then(data => {
     (data.sessions || data).forEach(s => createCard(s));
     if (data.browsers !== undefined) _globalBrowsers = data.browsers;
