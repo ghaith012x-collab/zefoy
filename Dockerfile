@@ -22,6 +22,4 @@ RUN apt-get update && \
 COPY torrc /etc/tor/torrc
 COPY . .
 
-EXPOSE 5000
-
 CMD ["python", "start_app.py"]
