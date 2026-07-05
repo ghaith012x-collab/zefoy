@@ -767,21 +767,17 @@ def run_tab(session, tab_id):
 
                     backoff = 5
 
-                    # \u2500\u2500 Main loop \u2500\u2500
-                    zero_streak = 0
-                    no_response_streak = 0
-                    MAX_NO_RESPONSE = 5
-                    MAX_ZERO_STREAK = 10
+                    # ── Main loop ──
                     while not session.stop_event.is_set():
                         if not _safe_check(page):
-                            session.log("\U0001f4a5 Page crashed in main loop, restarting...")
+                            session.log("💥 Page crashed in main loop, restarting...")
                             break
 
                         cycle = session.add_cycle()
-                        session.log(f"\U0001f504 Cycle {cycle}")
+                        session.log(f"🔄 Cycle {cycle}")
 
+                        # ── Step 1: Fill URL and click Search ──
                         try:
-                            # Broad selector: any visible input that isn't hidden/submit/checkbox/radio
                             input_sel = (
                                 f".{menu_cls} input[type='text'],"
                                 f".{menu_cls} input[type='url'],"
@@ -792,27 +788,17 @@ def run_tab(session, tab_id):
                             )
                             url_input = page.locator(input_sel).first
 
-                            # Quick check - if input not visible, re-open panel
                             try:
                                 url_input.wait_for(state="visible", timeout=5000)
                             except:
-                                if cycle <= 3 or cycle % 50 == 0:
-                                    try:
-                                        menu_html = page.evaluate(f"""() => {{
-                                            const m = document.querySelector('.{menu_cls}');
-                                            if (!m) return 'MENU NOT FOUND';
-                                            return m.innerHTML.substring(0, 600);
-                                        }}""")
-                                        session.log(f"\U0001f50d Menu HTML: {menu_html}")
-                                    except:
-                                        pass
-                                session.log(f"\u26a0\ufe0f Input not visible, re-opening {svc_name} panel...")
+                                # Input not visible — re-open panel
+                                session.log(f"⚠️ Input not visible, re-opening {svc_name} panel...")
                                 try:
                                     page.locator(f".{btn_cls}").click()
                                     time.sleep(2)
                                     url_input.wait_for(state="visible", timeout=10000)
                                 except:
-                                    session.log(f"\u26a0\ufe0f Still can't find input after re-open, retrying...")
+                                    session.log(f"⚠️ Still can't find input after re-open, retrying...")
                                     time.sleep(3)
                                     continue
 
@@ -821,6 +807,7 @@ def run_tab(session, tab_id):
                             url_input.fill(session.video_url)
                             time.sleep(1)
 
+                            # Click Search
                             submit_sel = (
                                 f".{menu_cls} button[type='submit'],"
                                 f".{menu_cls} input[type='submit'],"
@@ -831,9 +818,9 @@ def run_tab(session, tab_id):
                         except Exception as fill_err:
                             err_str = str(fill_err).lower()
                             if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
-                                session.log("\U0001f4a5 Crashed filling URL, restarting...")
+                                session.log("💥 Crashed filling URL, restarting...")
                                 break
-                            session.log(f"\u26a0\ufe0f Error filling URL: {fill_err}")
+                            session.log(f"⚠️ Error filling URL: {fill_err}")
                             time.sleep(3)
                             continue
 
@@ -851,24 +838,18 @@ def run_tab(session, tab_id):
                                     comment_result = page.evaluate("""(targetId) => {
                                         const radios = document.querySelectorAll('input[type="radio"]');
                                         if (radios.length === 0) return {status: 'no_comments'};
-
-                                        // Collect all comment info for logging
                                         const allComments = [];
                                         for (let i = 0; i < radios.length; i++) {
                                             const row = radios[i].closest('tr, label, div, li') || radios[i].parentElement;
                                             const rowText = row ? row.innerText.trim().substring(0, 80) : '';
-                                            const rowHtml = row ? row.innerHTML : '';
                                             allComments.push({idx: i, val: radios[i].value || '', text: rowText});
                                         }
-
-                                        // Try to match by comment ID if we have one
                                         if (targetId) {
                                             for (let i = 0; i < radios.length; i++) {
                                                 const radio = radios[i];
                                                 const val = radio.value || '';
                                                 const row = radio.closest('tr, label, div, li') || radio.parentElement;
                                                 const rowHtml = row ? row.innerHTML : '';
-
                                                 if (val.includes(targetId) || rowHtml.includes(targetId)) {
                                                     radio.click();
                                                     radio.checked = true;
@@ -878,8 +859,6 @@ def run_tab(session, tab_id):
                                                 }
                                             }
                                         }
-
-                                        // Fallback: select first comment
                                         radios[0].click();
                                         radios[0].checked = true;
                                         radios[0].dispatchEvent(new Event('change', {bubbles: true}));
@@ -889,23 +868,10 @@ def run_tab(session, tab_id):
                                     }""", target_comment_id)
 
                                     status = comment_result.get('status', 'no_comments')
-                                    if status == 'matched':
+                                    if status in ('matched', 'fallback'):
                                         cnt = comment_result.get('count', 0)
                                         text = comment_result.get('text', '')
-                                        idx = comment_result.get('index', 0)
-                                        session.log(f"✅ Matched comment #{idx+1}/{cnt}: {text[:50]}")
-                                        time.sleep(1)
-                                        break
-                                    elif status == 'fallback':
-                                        cnt = comment_result.get('count', 0)
-                                        text = comment_result.get('text', '')
-                                        comments = comment_result.get('comments', [])
-                                        if target_comment_id:
-                                            session.log(f"⚠️ Comment ID '{target_comment_id}' not found in {cnt} comments, selected first: {text[:50]}")
-                                            for c in comments[:5]:
-                                                session.log(f"   📝 [{c.get('idx')}] val={c.get('val','')[:20]} text={c.get('text','')[:40]}")
-                                        else:
-                                            session.log(f"✅ Selected first comment ({cnt} found): {text[:50]}")
+                                        session.log(f"✅ Selected comment ({cnt} found): {text[:50]}")
                                         time.sleep(1)
                                         break
                                     else:
@@ -917,148 +883,29 @@ def run_tab(session, tab_id):
                                         break
                                     time.sleep(1)
 
-                        crashed_in_check = False
-                        for check_round in range(120):
+                        # ── Step 2: Check what happened after Search ──
+                        max_checks = 60
+                        crashed = False
+                        for check_i in range(max_checks):
                             if session.stop_event.is_set():
                                 break
 
                             try:
-                                page_state = page.evaluate("""(menuClass) => {
-                                    const body = document.body.innerText || '';
-                                    const lower = body.toLowerCase();
-
-                                    const countdown = document.getElementById('login-countdown');
-                                    if (countdown && countdown.offsetParent !== null) {
-                                        const text = countdown.innerText || '';
-                                        if (text && (text.toLowerCase().includes('wait') ||
-                                            text.toLowerCase().includes('minute') ||
-                                            text.toLowerCase().includes('second'))) {
-                                            return {type: 'ratelimit', text: text};
-                                        }
-                                    }
-
-                                    if (lower.includes('successfully')) {
-                                        let count = 0;
-                                        const lines = body.split('\\n');
-                                        let successLine = '';
-                                        for (const line of lines) {
-                                            if (line.toLowerCase().includes('successfully')) {
-                                                successLine = line;
-                                                break;
-                                            }
-                                        }
-                                        // Log the raw success line for debugging
-                                        console.log('ZEFOY_SUCCESS_RAW: ' + successLine);
-                                        if (successLine) {
-                                            const lineNums = successLine.match(/\\d+/g);
-                                            if (lineNums) {
-                                                // Filter out year-like numbers (2020-2035), month/day (1-31 only if line has date-like pattern)
-                                                const hasDate = /\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4}|\\d{4}[\\/-]\\d{1,2}|[A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4}/.test(successLine);
-                                                const filtered = lineNums.map(Number).filter(n => {
-                                                    if (n >= 2020 && n <= 2035) return false; // year
-                                                    if (n > 100000) return false; // unreasonably large
-                                                    return true;
-                                                });
-                                                if (filtered.length > 0) {
-                                                    count = Math.max(...filtered);
-                                                }
-                                            }
-                                        }
-                                        return {type: 'success', count: count, rawLine: successLine};
-                                    }
-
-                                    const spinners = document.querySelectorAll('.fa-spinner, .fa-spin, .spinner, [class*="loading"], [class*="spin"]');
-                                    for (const s of spinners) {
-                                        if (s.offsetParent !== null) return {type: 'loading'};
-                                    }
-
-                                    const menu = document.querySelector('.' + menuClass);
-                                    if (menu) {
-                                        const forms = menu.querySelectorAll('form');
-                                        for (const form of forms) {
-                                            const action = form.getAttribute('action');
-                                            if (action) {
-                                                const container = document.getElementById(action);
-                                                if (container && container.offsetParent !== null) {
-                                                    const btn = container.querySelector('a, button, [onclick]');
-                                                    if (btn && btn.offsetParent !== null) {
-                                                        const r = btn.getBoundingClientRect();
-                                                        if (r.width > 0 && r.height > 0) {
-                                                            const sel = container.querySelector('select');
-                                                            const selOpts = sel ? Array.from(sel.options).filter(o => o.value).map(o => o.value) : [];
-                                                            return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2, hasSelect: !!sel, selectOptions: selOpts};
-                                                        }
-                                                    }
-                                                    const divs = container.querySelectorAll('div, span');
-                                                    for (const d of divs) {
-                                                        const t = d.innerText?.trim();
-                                                        if (t && /\\d/.test(t) && t.length < 60 &&
-                                                            !t.includes('wait') && !t.includes('minute') &&
-                                                            !t.includes('second') && !t.includes('Please')) {
-                                                            const r = d.getBoundingClientRect();
-                                                            if (r.width > 50 && r.height > 10)
-                                                                return {type: 'bar', x: r.x + r.width/2, y: r.y + r.height/2};
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if (lower.includes('please wait') && (lower.includes('minute') || lower.includes('second'))) {
-                                        return {type: 'ratelimit', text: body.substring(0, 500)};
-                                    }
-
-                                    return {type: 'waiting'};
-                                }""", menu_cls)
-                            except Exception as eval_err:
-                                err_str = str(eval_err).lower()
-                                if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
-                                    session.log("\U0001f4a5 Crashed during page check, restarting...")
-                                    crashed_in_check = True
+                                body = page.inner_text("body")
+                            except Exception as e:
+                                if "crash" in str(e).lower() or "target closed" in str(e).lower():
+                                    crashed = True
                                     break
                                 time.sleep(1)
                                 continue
 
-                            state_type = page_state.get('type', 'waiting') if page_state else 'waiting'
+                            lower_body = body.lower()
 
-                            if state_type == 'ratelimit':
-                                no_response_streak = 0
-                                timer_text = page_state.get('text', '')
-                                wait_secs = parse_wait_time(timer_text)
-                                if wait_secs <= 0:
-                                    wait_secs = 60
-                                wait_secs += 5
-                                session.log(f"\u23f3 Rate limited ({wait_secs}s)")
-
-                                for remaining in range(wait_secs, 0, -1):
-                                    if session.stop_event.is_set():
-                                        break
-                                    mins = remaining // 60
-                                    secs = remaining % 60
-                                    time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
-                                    session.set_countdown(f"\u23f3 {time_str} remaining")
-                                    time.sleep(1)
-
-                                session.set_countdown("")
-                                session.log("\u2705 Rate limit done, retrying...")
-
+                            # ── "Too many requests" → just click Search again ──
+                            if "too many" in lower_body or "slow down" in lower_body:
+                                session.log("⚠️ Too many requests — clicking Search again...")
+                                time.sleep(2)
                                 try:
-                                    time.sleep(1)
-                                    # Re-acquire input with broad selector after ratelimit
-                                    input_sel = (
-                                        f".{menu_cls} input[type='text'],"
-                                        f".{menu_cls} input[type='url'],"
-                                        f".{menu_cls} input[type='search'],"
-                                        f".{menu_cls} input[placeholder],"
-                                        f".{menu_cls} input:not([type='hidden']):not([type='submit'])"
-                                        f":not([type='checkbox']):not([type='radio'])"
-                                    )
-                                    url_input = page.locator(input_sel).first
-                                    url_input.fill("")
-                                    time.sleep(0.3)
-                                    url_input.fill(session.video_url)
-                                    time.sleep(1)
                                     submit_sel = (
                                         f".{menu_cls} button[type='submit'],"
                                         f".{menu_cls} input[type='submit'],"
@@ -1066,194 +913,127 @@ def run_tab(session, tab_id):
                                     )
                                     page.locator(submit_sel).first.click()
                                     time.sleep(3)
-                                except Exception as refill_err:
-                                    err_str = str(refill_err).lower()
-                                    if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
-                                        crashed_in_check = True
-                                        break
+                                except:
+                                    pass
                                 continue
 
-                            elif state_type == 'success':
-                                raw_line = page_state.get('rawLine', '')
-                                count = page_state.get('count', 0)
-                                if raw_line:
-                                    session.log(f"📝 Zefoy raw: {raw_line[:120]}")
-                                # If success but no count, try to read from dropdown
-                                if count == 0:
-                                    try:
-                                        sel_val = page.locator("select#selectlimit, select[name='select_lmt'], select.form-select").first.input_value()
-                                        if sel_val:
-                                            count = int(sel_val)
-                                            session.log(f"📝 No count in msg, using dropdown: {count}")
-                                    except:
-                                        pass
+                            # ── Countdown / rate limit → wait, then click Search 2x ──
+                            if ("please wait" in lower_body and ("minute" in lower_body or "second" in lower_body)):
+                                wait_secs = parse_wait_time(body)
+                                if wait_secs <= 0:
+                                    wait_secs = 60
+                                wait_secs += 3
+                                session.log(f"⏳ Countdown: {wait_secs}s")
+
+                                for remaining in range(wait_secs, 0, -1):
+                                    if session.stop_event.is_set():
+                                        break
+                                    mins = remaining // 60
+                                    secs = remaining % 60
+                                    time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
+                                    session.set_countdown(f"⏳ {time_str}")
+                                    time.sleep(1)
+                                session.set_countdown("")
+
+                                # Click Search 2 times after countdown
+                                session.log("✅ Countdown done — clicking Search 2x...")
+                                try:
+                                    submit_sel = (
+                                        f".{menu_cls} button[type='submit'],"
+                                        f".{menu_cls} input[type='submit'],"
+                                        f".{menu_cls} .btn-primary"
+                                    )
+                                    page.locator(submit_sel).first.click()
+                                    time.sleep(1)
+                                    page.locator(submit_sel).first.click()
+                                    time.sleep(3)
+                                except:
+                                    pass
+                                continue
+
+                            # ── "READY" text → click Search ──
+                            if "ready" in lower_body and "next submit" in lower_body:
+                                session.log("✅ Ready — clicking Search...")
+                                try:
+                                    submit_sel = (
+                                        f".{menu_cls} button[type='submit'],"
+                                        f".{menu_cls} input[type='submit'],"
+                                        f".{menu_cls} .btn-primary"
+                                    )
+                                    page.locator(submit_sel).first.click()
+                                    time.sleep(3)
+                                except:
+                                    pass
+                                continue
+
+                            # ── Success message ──
+                            if "successfully" in lower_body:
+                                count = 0
+                                for line in body.split('\n'):
+                                    if 'successfully' in line.lower():
+                                        session.log(f"📝 Raw: {line.strip()[:120]}")
+                                        try:
+                                            nums = [int(m) for m in re.findall(r'\d+', line) if not (2020 <= int(m) <= 2035) and int(m) < 100000]
+                                        except:
+                                            nums = []
+                                        if nums:
+                                            count = max(nums)
+                                        break
                                 new_total = session.add_count(count)
                                 if count > 0:
-                                    zero_streak = 0
-                                    no_response_streak = 0
-                                    session.log(f"\U0001f389 +{count} {unit}! Total: {new_total:,}")
+                                    session.log(f"🎉 +{count} {unit}! Total: {new_total:,}")
                                 else:
-                                    zero_streak += 1
-                                    no_response_streak = 0
-                                    if zero_streak >= MAX_ZERO_STREAK:
-                                        session.log(f"\u26a0\ufe0f {zero_streak} consecutive 0 {unit} \u2014 resetting (not stopping)...")
-                                        zero_streak = 0
-                                    else:
-                                        session.log(f"\u26a0\ufe0f Zefoy returned 0 {unit} (streak: {zero_streak}/{MAX_ZERO_STREAK}) \u2014 retrying...")
+                                    session.log(f"✅ Success (count not captured). Total: {new_total:,}")
                                 break
 
-                            elif state_type == 'bar':
-                                selected_limit = 0
-                                if page_state.get('hasSelect') and page_state.get('selectOptions'):
-                                    try:
-                                        best = page_state['selectOptions'][-1]
-                                        page.locator("select#selectlimit, select[name='select_lmt'], select.form-select").first.select_option(best)
-                                        try:
-                                            selected_limit = int(best)
-                                        except:
-                                            selected_limit = 0
-                                        session.log(f"\U0001f4ca Selected limit: {best}")
-                                        time.sleep(0.5)
-                                    except Exception as sel_err:
-                                        session.log(f"\u26a0\ufe0f Could not set limit dropdown: {sel_err}")
-
-                                x, y = page_state['x'], page_state['y']
-                                session.log(f"{emoji} Sending {unit} (clicking {x:.0f},{y:.0f})...")
-                                try:
+                            # ── Send button visible (the bar with send/arrow) → click it ──
+                            try:
+                                bar_info = page.evaluate(f"""() => {{
+                                    const menu = document.querySelector('.{menu_cls}');
+                                    if (!menu) return null;
+                                    const forms = menu.querySelectorAll('form');
+                                    for (const form of forms) {{
+                                        const action = form.getAttribute('action');
+                                        if (action) {{
+                                            const container = document.getElementById(action);
+                                            if (container && container.offsetParent !== null) {{
+                                                const btn = container.querySelector('a, button, [onclick]');
+                                                if (btn && btn.offsetParent !== null) {{
+                                                    const r = btn.getBoundingClientRect();
+                                                    if (r.width > 0 && r.height > 0) {{
+                                                        return {{x: r.x + r.width/2, y: r.y + r.height/2}};
+                                                    }}
+                                                }}
+                                            }}
+                                        }}
+                                    }}
+                                    return null;
+                                }}""")
+                                if bar_info:
+                                    x, y = bar_info['x'], bar_info['y']
+                                    session.log(f"{emoji} Clicking send button ({x:.0f},{y:.0f})...")
                                     page.mouse.click(x, y)
-                                except Exception as click_err:
-                                    err_str = str(click_err).lower()
-                                    if "crash" in err_str or "target closed" in err_str:
-                                        crashed_in_check = True
-                                        break
-                                time.sleep(0.5)
+                                    time.sleep(3)
+                                    continue
+                            except:
+                                pass
 
-                                count = 0
-                                found_result = False
-                                for wait_i in range(50):
-                                    try:
-                                        body = page.inner_text("body")
-                                        lower_body = body.lower()
-
-                                        if wait_i == 0:
-                                            snippet = body.replace('\n', ' ')[:300]
-                                            session.log(f"🔍 Page after click: {snippet}")
-
-                                        # Check for success message (highest priority)
-                                        if "successfully" in lower_body:
-                                            for line in body.split('\n'):
-                                                if 'successfully' in line.lower():
-                                                    session.log(f"📝 Raw success: {line.strip()[:120]}")
-                                                    try:
-                                                        line_nums = [int(m) for m in re.findall(r'\d+', line) if not (2020 <= int(m) <= 2035) and int(m) < 100000]
-                                                    except:
-                                                        line_nums = []
-                                                    if line_nums:
-                                                        count = max(line_nums)
-                                                    break
-                                            # If success message had no number, use the selected limit
-                                            if count == 0 and selected_limit > 0:
-                                                count = selected_limit
-                                                session.log(f"📝 No count in success msg, using selected limit: {count}")
-                                            elif count == 0:
-                                                # Try to read select value from page
-                                                try:
-                                                    sel_val = page.locator("select#selectlimit, select[name='select_lmt'], select.form-select").first.input_value()
-                                                    if sel_val:
-                                                        count = int(sel_val)
-                                                        session.log(f"📝 Read count from dropdown: {count}")
-                                                except:
-                                                    pass
-                                            new_total = session.add_count(count)
-                                            found_result = True
-                                            break
-
-                                        # Rate limit after click = implicit success
-                                        if "please wait" in lower_body and ("minute" in lower_body or "second" in lower_body):
-                                            # Try to find count from any remaining success text
-                                            for line in body.split('\n'):
-                                                ll = line.lower()
-                                                if any(kw in ll for kw in ['sent', 'added', 'delivered', 'success']):
-                                                    try:
-                                                        nums = [int(m) for m in re.findall(r'\d+', line) if not (2020 <= int(m) <= 2035) and int(m) < 100000 and int(m) > 0]
-                                                    except:
-                                                        nums = []
-                                                    if nums:
-                                                        count = max(nums)
-                                                        session.log(f"📝 Found count in rate-limit page: {count}")
-                                                        break
-                                            # Fallback to selected limit
-                                            if count == 0 and selected_limit > 0:
-                                                count = selected_limit
-                                                session.log(f"📝 Rate limit after send, using selected limit: {count}")
-                                            elif count == 0:
-                                                session.log(f"⏳ Rate limit after send ({unit} sent, count not captured)")
-                                            new_total = session.add_count(count)
-                                            found_result = True
-                                            break
-                                    except:
-                                        pass
-                                    time.sleep(0.3)
-
-                                if not found_result:
-                                    new_total = session.add_count(0)
-
-                                if count > 0:
-                                    zero_streak = 0
-                                    no_response_streak = 0
-                                    session.log(f"\U0001f389 +{count} {unit}! Total: {new_total:,}")
-                                else:
-                                    zero_streak += 1
-                                    no_response_streak = 0
-                                    if zero_streak >= MAX_ZERO_STREAK:
-                                        session.log(f"\u26a0\ufe0f {zero_streak} consecutive 0 {unit} \u2014 resetting (not stopping)...")
-                                        zero_streak = 0
-                                    else:
-                                        session.log(f"\u26a0\ufe0f Zefoy returned 0 {unit} (streak: {zero_streak}/{MAX_ZERO_STREAK}) \u2014 retrying...")
-                                break
-
-                            elif state_type == 'loading':
+                            # ── Still loading / waiting ──
+                            if check_i < 30:
                                 time.sleep(1)
                                 continue
-
                             else:
-                                if check_round < 30:
-                                    time.sleep(1)
-                                    continue
-                                else:
-                                    no_response_streak += 1
-                                    if no_response_streak >= MAX_NO_RESPONSE:
-                                        session.log(f"\U0001f534 {no_response_streak} consecutive no-responses \u2014 reloading page...")
-                                        no_response_streak = 0
-                                        try:
-                                            page.reload(wait_until="domcontentloaded")
-                                            time.sleep(5)
-                                            try:
-                                                page.locator(f".{btn_cls}").wait_for(timeout=10000)
-                                                page.locator(f".{btn_cls}").click()
-                                                time.sleep(2)
-                                                session.log(f"\u2705 {svc_name} panel re-opened after reload")
-                                            except:
-                                                session.log(f"\u26a0\ufe0f {svc_name} button not found after reload, restarting...")
-                                                crashed_in_check = True
-                                                break
-                                        except Exception as reload_err:
-                                            err_str = str(reload_err).lower()
-                                            if "crash" in err_str or "target closed" in err_str:
-                                                crashed_in_check = True
-                                                break
-                                            session.log(f"\u26a0\ufe0f Reload error: {reload_err}")
-                                    else:
-                                        session.log(f"\u26a0\ufe0f No response, retrying... ({no_response_streak}/{MAX_NO_RESPONSE})")
-                                    break
+                                session.log(f"⚠️ No response after {check_i}s, breaking to retry...")
+                                break
 
-                        if crashed_in_check:
-                            session.log("\U0001f4a5 Crashed in main loop, restarting tab...")
+                        if crashed:
+                            session.log("💥 Crashed in main loop, restarting tab...")
                             break
 
-                        time.sleep(3)
+                        time.sleep(2)
                         if cycle % 10 == 0:
                             gc.collect()
+
 
             except Exception as inner_err:
                 err_str = str(inner_err).lower()
