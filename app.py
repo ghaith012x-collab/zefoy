@@ -829,16 +829,18 @@ def run_tab(session, tab_id):
                             time.sleep(3)
                             continue
 
-                        # ── Comment Hearts: click 💬 button, find user, select 100, click heart ──
+                        # ── Comment Hearts: click 💬, find user, select 100, click heart, loop ──
                         if session.service == "comment_hearts":
                             target_user = session.username.lstrip('@').lower()
 
-                            # A: Check for too many requests or countdown first
+                            # A: Check page state
                             try:
                                 body_check = page.inner_text("body").lower()
                             except:
                                 session.log("💥 Page crash, restarting...")
                                 break
+
+                            # Too many requests? Just click Search again
                             if "too many" in body_check or "slow down" in body_check:
                                 session.log("⚠️ Too many requests, clicking Search...")
                                 try:
@@ -847,31 +849,8 @@ def run_tab(session, tab_id):
                                     pass
                                 time.sleep(3)
                                 continue
-                            if "please wait" in body_check and ("minute" in body_check or "second" in body_check):
-                                mins_m = re.search(r'(\d+)\s*minute', body_check)
-                                secs_m = re.search(r'(\d+)\s*second', body_check)
-                                mins = int(mins_m.group(1)) if mins_m else 0
-                                secs = int(secs_m.group(1)) if secs_m else 0
-                                wait_secs = mins * 60 + secs
-                                if wait_secs > 0:
-                                    session.log(f"⏳ Countdown {mins}m {secs}s, waiting...")
-                                    session.countdown = f"{mins}m {secs}s"
-                                    for _w in range(wait_secs + 2):
-                                        if session.stop_event.is_set():
-                                            break
-                                        time.sleep(1)
-                                    session.countdown = ""
-                                    try:
-                                        page.locator(submit_sel).first.click()
-                                        time.sleep(1)
-                                        page.locator(submit_sel).first.click()
-                                    except:
-                                        pass
-                                    time.sleep(3)
-                                    continue
 
                             # B: Wait for 💬 count button and click it
-                            # Check if comment forms already visible (e.g. from previous state)
                             if page.locator(f".{menu_cls} .kadi-rengi").count() > 0:
                                 session.log("💬 Comments already visible")
                             else:
@@ -887,6 +866,11 @@ def run_tab(session, tab_id):
                                         session.log(f"⚠️ 💬 button not found. Panel: {snippet}")
                                     except:
                                         session.log("⚠️ 💬 button not found, panel unreadable")
+                                    # Click Search to retry
+                                    try:
+                                        page.locator(submit_sel).first.click()
+                                    except:
+                                        pass
                                     time.sleep(3)
                                     continue
 
@@ -931,69 +915,25 @@ def run_tab(session, tab_id):
                                 time.sleep(3)
                                 continue
 
-                            # D: Handle response after comment heart submit
-                            for _resp in range(120):
-                                if session.stop_event.is_set():
-                                    break
-                                try:
-                                    body = page.inner_text("body")
-                                except:
-                                    break
-                                lower = body.lower()
+                            # D: Check result — no countdown for comment hearts
+                            try:
+                                body = page.inner_text("body").lower()
+                            except:
+                                break
 
-                                if "too many" in lower or "slow down" in lower:
-                                    session.log("⚠️ Too many requests, clicking Search...")
-                                    try:
-                                        page.locator(submit_sel).first.click()
-                                    except:
-                                        pass
-                                    time.sleep(3)
-                                    break
+                            if "successfully" in body:
+                                session.add_count(100)
+                                session.log(f"💬 +100 hearts to @{target_user} (total: {session.total_count})")
+                            elif "too many" in body or "slow down" in body:
+                                session.log("⚠️ Too many requests")
 
-                                if "successfully" in lower:
-                                    nums = re.findall(r'(\d[\d,]*)', body)
-                                    count = 100
-                                    for n in nums:
-                                        val = int(n.replace(',', ''))
-                                        if 1 <= val <= 10000:
-                                            count = val
-                                            break
-                                    session.add_count(count)
-                                    session.log(f"💬 +{count} hearts to @{target_user} (total: {session.total_count})")
-                                    time.sleep(2)
-                                    break
-
-                                if "please wait" in lower and ("minute" in lower or "second" in lower):
-                                    mins_m = re.search(r'(\d+)\s*minute', lower)
-                                    secs_m = re.search(r'(\d+)\s*second', lower)
-                                    mins = int(mins_m.group(1)) if mins_m else 0
-                                    secs = int(secs_m.group(1)) if secs_m else 0
-                                    wait_secs = mins * 60 + secs
-                                    if wait_secs > 0:
-                                        session.log(f"⏳ Waiting {mins}m {secs}s...")
-                                        session.countdown = f"{mins}m {secs}s"
-                                        time.sleep(wait_secs + 2)
-                                        session.countdown = ""
-                                        try:
-                                            page.locator(submit_sel).first.click()
-                                            time.sleep(1)
-                                            page.locator(submit_sel).first.click()
-                                        except:
-                                            pass
-                                        time.sleep(3)
-                                        break
-
-                                if "ready" in lower:
-                                    try:
-                                        page.locator(submit_sel).first.click()
-                                        time.sleep(1)
-                                        page.locator(submit_sel).first.click()
-                                    except:
-                                        pass
-                                    time.sleep(3)
-                                    break
-
-                                time.sleep(1)
+                            # Click Search to go again
+                            time.sleep(2)
+                            try:
+                                page.locator(submit_sel).first.click()
+                            except:
+                                pass
+                            time.sleep(3)
                             continue  # Skip regular hearts response handler
 
                         # ── Step 2: Check what happened after Search ──
