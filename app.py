@@ -898,45 +898,68 @@ def run_tab(session, tab_id):
                                     time.sleep(3)
                                     continue
 
-                            # C: Find target username index, then use Playwright to select 100 + click
-                            try:
-                                result = page.evaluate("""(targetUser) => {
-                                    const forms = document.querySelectorAll('form.w1a');
-                                    const users = [];
-                                    for (let i = 0; i < forms.length; i++) {
-                                        const userEl = forms[i].querySelector('.kadi-rengi');
-                                        if (!userEl) continue;
-                                        const uname = userEl.innerText.trim().replace('@','').toLowerCase();
-                                        users.push(uname);
-                                        if (uname === targetUser) {
-                                            return {found:true, index:i, total:forms.length, users:users};
-                                        }
-                                    }
-                                    return {found:false, total:forms.length, users:users};
-                                }""", target_user)
-
-                                if not result.get('found'):
-                                    users = result.get('users', [])
-                                    session.log(f"⚠️ @{target_user} not found. Comments: {', '.join('@'+u for u in users[:5])}")
-                                    time.sleep(5)
-                                    continue
-
-                                # Use Playwright .nth() to target the correct form
-                                idx = result['index']
-                                form_loc = page.locator(f".{menu_cls} form.w1a").nth(idx)
-                                # Select 100 from dropdown
-                                form_loc.locator("select[name='select_lmt']").select_option("100")
-                                time.sleep(1)
-                                # Click the heart submit button
-                                form_loc.locator("button[type='submit']").click()
-                                session.log(f"💬 Sent 100 hearts to @{target_user}")
-                                time.sleep(3)
-                            except Exception as ce:
-                                err_s = str(ce).lower()
-                                if "crash" in err_s or "target closed" in err_s or "disposed" in err_s:
-                                    session.log("💥 Crashed during comment selection, restarting...")
+                            # C: Find target username — paginate through ALL comment pages
+                            found_user = False
+                            crashed = False
+                            max_pages = 250  # up to ~10,000 comments at 40/page
+                            for pg in range(max_pages):
+                                if session.stop_event.is_set():
                                     break
-                                session.log(f"⚠️ Comment error: {ce}")
+                                try:
+                                    result = page.evaluate("""(targetUser) => {
+                                        const forms = document.querySelectorAll('form.w1a');
+                                        const users = [];
+                                        for (let i = 0; i < forms.length; i++) {
+                                            const userEl = forms[i].querySelector('.kadi-rengi');
+                                            if (!userEl) continue;
+                                            const uname = userEl.innerText.trim().replace('@','').toLowerCase();
+                                            users.push(uname);
+                                            if (uname === targetUser) {
+                                                return {found: true, index: i, total: forms.length};
+                                            }
+                                        }
+                                        const nextBtn = document.querySelector('li[title="Next"] button');
+                                        const hasNext = nextBtn && !nextBtn.disabled;
+                                        return {found: false, total: forms.length, users: users, hasNext: hasNext};
+                                    }""", target_user)
+
+                                    if result.get('found'):
+                                        idx = result['index']
+                                        form_loc = page.locator(f".{menu_cls} form.w1a").nth(idx)
+                                        form_loc.locator("select[name='select_lmt']").select_option("100")
+                                        time.sleep(1)
+                                        form_loc.locator("button[type='submit']").click()
+                                        session.log(f"💬 Sent 100 hearts to @{target_user} (page {pg + 1})")
+                                        found_user = True
+                                        time.sleep(3)
+                                        break
+
+                                    if result.get('hasNext'):
+                                        if pg == 0:
+                                            session.log(f"🔍 @{target_user} not on page 1, paginating...")
+                                        page.locator('li[title="Next"] button').click()
+                                        time.sleep(4)
+                                    else:
+                                        total_scanned = (pg * 40) + result.get('total', 0)
+                                        session.log(f"❌ @{target_user} not found in {total_scanned} comments ({pg + 1} pages)")
+                                        break
+                                except Exception as ce:
+                                    err_s = str(ce).lower()
+                                    if "crash" in err_s or "target closed" in err_s or "disposed" in err_s:
+                                        crashed = True
+                                        session.log("💥 Crashed during pagination, restarting...")
+                                        break
+                                    session.log(f"⚠️ Pagination error: {ce}")
+                                    break
+
+                            if crashed:
+                                break
+                            if not found_user:
+                                time.sleep(2)
+                                try:
+                                    page.locator(submit_sel).first.click()
+                                except:
+                                    pass
                                 time.sleep(3)
                                 continue
 
