@@ -833,7 +833,7 @@ def run_tab(session, tab_id):
                         if session.service == "comment_hearts":
                             target_user = session.username.lstrip('@').lower()
 
-                            # A: Check for too many requests first
+                            # A: Check for too many requests or countdown first
                             try:
                                 body_check = page.inner_text("body").lower()
                             except:
@@ -847,6 +847,28 @@ def run_tab(session, tab_id):
                                     pass
                                 time.sleep(3)
                                 continue
+                            if "please wait" in body_check and ("minute" in body_check or "second" in body_check):
+                                mins_m = re.search(r'(\d+)\s*minute', body_check)
+                                secs_m = re.search(r'(\d+)\s*second', body_check)
+                                mins = int(mins_m.group(1)) if mins_m else 0
+                                secs = int(secs_m.group(1)) if secs_m else 0
+                                wait_secs = mins * 60 + secs
+                                if wait_secs > 0:
+                                    session.log(f"⏳ Countdown {mins}m {secs}s, waiting...")
+                                    session.countdown = f"{mins}m {secs}s"
+                                    for _w in range(wait_secs + 2):
+                                        if session.stop_event.is_set():
+                                            break
+                                        time.sleep(1)
+                                    session.countdown = ""
+                                    try:
+                                        page.locator(submit_sel).first.click()
+                                        time.sleep(1)
+                                        page.locator(submit_sel).first.click()
+                                    except:
+                                        pass
+                                    time.sleep(3)
+                                    continue
 
                             # B: Wait for 💬 count button and click it
                             # Check if comment forms already visible (e.g. from previous state)
