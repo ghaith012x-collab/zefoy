@@ -921,15 +921,15 @@ def run_tab(session, tab_id):
                                     time.sleep(5)
                                     continue
 
-                                # Use Playwright native methods for proper form interaction
+                                # Use Playwright .nth() to target the correct form
                                 idx = result['index']
-                                form_sel = f"form.w1a:nth-child({idx + 1})"
+                                form_loc = page.locator(f".{menu_cls} form.w1a").nth(idx)
                                 # Select 100 from dropdown
-                                page.locator(f"{form_sel} select[name='select_lmt']").select_option("100")
+                                form_loc.locator("select[name='select_lmt']").select_option("100")
                                 time.sleep(1)
                                 # Click the heart submit button
-                                page.locator(f"{form_sel} button[type='submit']").click()
-                                session.log(f"💬 Sending 100 hearts to @{target_user}")
+                                form_loc.locator("button[type='submit']").click()
+                                session.log(f"💬 Sent 100 hearts to @{target_user}")
                                 time.sleep(3)
                             except Exception as ce:
                                 err_s = str(ce).lower()
