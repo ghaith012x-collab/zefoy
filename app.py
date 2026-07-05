@@ -850,6 +850,30 @@ def run_tab(session, tab_id):
                                 time.sleep(3)
                                 continue
 
+                            # Countdown? Wait it out, then click Search
+                            if "please wait" in body_check and ("minute" in body_check or "second" in body_check):
+                                wait_secs = parse_wait_time(body_check)
+                                if wait_secs <= 0:
+                                    wait_secs = 60
+                                wait_secs += 3
+                                session.log(f"⏳ Countdown: {wait_secs}s")
+                                for remaining in range(wait_secs, 0, -1):
+                                    if session.stop_event.is_set():
+                                        break
+                                    mins = remaining // 60
+                                    secs = remaining % 60
+                                    time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
+                                    session.set_countdown(f"⏳ {time_str}")
+                                    time.sleep(1)
+                                session.set_countdown("")
+                                session.log("✅ Countdown done — clicking Search...")
+                                try:
+                                    page.locator(submit_sel).first.click()
+                                except:
+                                    pass
+                                time.sleep(3)
+                                continue
+
                             # B: Wait for 💬 count button and click it
                             if page.locator(f".{menu_cls} .kadi-rengi").count() > 0:
                                 session.log("💬 Comments already visible")
