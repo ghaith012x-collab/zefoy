@@ -781,13 +781,52 @@ def run_tab(session, tab_id):
                         session.log(f"\U0001f504 Cycle {cycle}")
 
                         try:
-                            url_input = page.locator(f".{menu_cls} input[type='text'], .{menu_cls} input[placeholder]").first
+                            # Broad selector: any visible input that isn't hidden/submit/checkbox/radio
+                            input_sel = (
+                                f".{menu_cls} input[type='text'],"
+                                f".{menu_cls} input[type='url'],"
+                                f".{menu_cls} input[type='search'],"
+                                f".{menu_cls} input[placeholder],"
+                                f".{menu_cls} input:not([type='hidden']):not([type='submit'])"
+                                f":not([type='checkbox']):not([type='radio'])"
+                            )
+                            url_input = page.locator(input_sel).first
+
+                            # Quick check - if input not visible, re-open panel
+                            try:
+                                url_input.wait_for(state="visible", timeout=5000)
+                            except:
+                                if cycle <= 3 or cycle % 50 == 0:
+                                    try:
+                                        menu_html = page.evaluate(f"""() => {{
+                                            const m = document.querySelector('.{menu_cls}');
+                                            if (!m) return 'MENU NOT FOUND';
+                                            return m.innerHTML.substring(0, 600);
+                                        }}""")
+                                        session.log(f"\U0001f50d Menu HTML: {menu_html}")
+                                    except:
+                                        pass
+                                session.log(f"\u26a0\ufe0f Input not visible, re-opening {svc_name} panel...")
+                                try:
+                                    page.locator(f".{btn_cls}").click()
+                                    time.sleep(2)
+                                    url_input.wait_for(state="visible", timeout=10000)
+                                except:
+                                    session.log(f"\u26a0\ufe0f Still can't find input after re-open, retrying...")
+                                    time.sleep(3)
+                                    continue
+
                             url_input.fill("")
                             time.sleep(0.3)
                             url_input.fill(session.video_url)
                             time.sleep(1)
 
-                            page.locator(f".{menu_cls} button[type='submit']").first.click()
+                            submit_sel = (
+                                f".{menu_cls} button[type='submit'],"
+                                f".{menu_cls} input[type='submit'],"
+                                f".{menu_cls} .btn-primary"
+                            )
+                            page.locator(submit_sel).first.click()
                             time.sleep(3)
                         except Exception as fill_err:
                             err_str = str(fill_err).lower()
@@ -1006,11 +1045,26 @@ def run_tab(session, tab_id):
 
                                 try:
                                     time.sleep(1)
+                                    # Re-acquire input with broad selector after ratelimit
+                                    input_sel = (
+                                        f".{menu_cls} input[type='text'],"
+                                        f".{menu_cls} input[type='url'],"
+                                        f".{menu_cls} input[type='search'],"
+                                        f".{menu_cls} input[placeholder],"
+                                        f".{menu_cls} input:not([type='hidden']):not([type='submit'])"
+                                        f":not([type='checkbox']):not([type='radio'])"
+                                    )
+                                    url_input = page.locator(input_sel).first
                                     url_input.fill("")
                                     time.sleep(0.3)
                                     url_input.fill(session.video_url)
                                     time.sleep(1)
-                                    page.locator(f".{menu_cls} button[type='submit']").first.click()
+                                    submit_sel = (
+                                        f".{menu_cls} button[type='submit'],"
+                                        f".{menu_cls} input[type='submit'],"
+                                        f".{menu_cls} .btn-primary"
+                                    )
+                                    page.locator(submit_sel).first.click()
                                     time.sleep(3)
                                 except Exception as refill_err:
                                     err_str = str(refill_err).lower()
