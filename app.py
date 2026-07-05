@@ -874,7 +874,7 @@ def run_tab(session, tab_id):
                                     time.sleep(3)
                                     continue
 
-                            # C: Find target username, select 100, click heart
+                            # C: Find target username index, then use Playwright to select 100 + click
                             try:
                                 result = page.evaluate("""(targetUser) => {
                                     const forms = document.querySelectorAll('form.w1a');
@@ -885,27 +885,28 @@ def run_tab(session, tab_id):
                                         const uname = userEl.innerText.trim().replace('@','').toLowerCase();
                                         users.push(uname);
                                         if (uname === targetUser) {
-                                            const sel = forms[i].querySelector('select[name="select_lmt"]');
-                                            if (sel) {
-                                                sel.value = '100';
-                                                sel.dispatchEvent(new Event('change', {bubbles:true}));
-                                            }
-                                            const btn = forms[i].querySelector('button[type="submit"]');
-                                            if (btn) btn.click();
                                             return {found:true, index:i, total:forms.length, users:users};
                                         }
                                     }
                                     return {found:false, total:forms.length, users:users};
                                 }""", target_user)
 
-                                if result.get('found'):
-                                    session.log(f"💬 Sending 100 hearts to @{target_user}")
-                                    time.sleep(3)
-                                else:
+                                if not result.get('found'):
                                     users = result.get('users', [])
                                     session.log(f"⚠️ @{target_user} not found. Comments: {', '.join('@'+u for u in users[:5])}")
                                     time.sleep(5)
                                     continue
+
+                                # Use Playwright native methods for proper form interaction
+                                idx = result['index']
+                                form_sel = f"form.w1a:nth-child({idx + 1})"
+                                # Select 100 from dropdown
+                                page.locator(f"{form_sel} select[name='select_lmt']").select_option("100")
+                                time.sleep(1)
+                                # Click the heart submit button
+                                page.locator(f"{form_sel} button[type='submit']").click()
+                                session.log(f"💬 Sending 100 hearts to @{target_user}")
+                                time.sleep(3)
                             except Exception as ce:
                                 err_s = str(ce).lower()
                                 if "crash" in err_s or "target closed" in err_s or "disposed" in err_s:
