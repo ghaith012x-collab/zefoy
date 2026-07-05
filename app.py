@@ -766,6 +766,7 @@ def run_tab(session, tab_id):
                     session.log(f"\u2705 {svc_name} panel opened!")
 
                     backoff = 5
+                    url_filled = False
 
                     # ── Main loop ──
                     while not session.stop_event.is_set():
@@ -776,7 +777,6 @@ def run_tab(session, tab_id):
                         cycle = session.add_cycle()
                         session.log(f"🔄 Cycle {cycle}")
 
-                        # ── Step 1: Fill URL and click Search ──
                         try:
                             input_sel = (
                                 f".{menu_cls} input[type='text'],"
@@ -801,11 +801,16 @@ def run_tab(session, tab_id):
                                     session.log(f"⚠️ Still can't find input after re-open, retrying...")
                                     time.sleep(3)
                                     continue
+                                url_filled = False  # panel reopened, need to fill again
 
-                            url_input.fill("")
-                            time.sleep(0.3)
-                            url_input.fill(session.video_url)
-                            time.sleep(1)
+                            # Only fill URL the first time (or after panel re-open)
+                            if not url_filled:
+                                url_input.fill("")
+                                time.sleep(0.3)
+                                url_input.fill(session.video_url)
+                                time.sleep(1)
+                                url_filled = True
+                                session.log(f"✅ URL filled")
 
                             # Click Search
                             submit_sel = (
@@ -820,7 +825,7 @@ def run_tab(session, tab_id):
                             if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
                                 session.log("💥 Crashed filling URL, restarting...")
                                 break
-                            session.log(f"⚠️ Error filling URL: {fill_err}")
+                            session.log(f"⚠️ Error: {fill_err}")
                             time.sleep(3)
                             continue
 
