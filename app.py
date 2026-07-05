@@ -849,16 +849,24 @@ def run_tab(session, tab_id):
                                 continue
 
                             # B: Wait for 💬 count button and click it
-                            try:
-                                count_btn = page.locator(f".{menu_cls} button.wbutton").first
-                                count_btn.wait_for(state="visible", timeout=10000)
-                                count_btn.click()
-                                time.sleep(3)
-                                session.log("💬 Comments loaded")
-                            except:
-                                session.log("⚠️ 💬 button not found, retrying...")
-                                time.sleep(3)
-                                continue
+                            # Check if comment forms already visible (e.g. from previous state)
+                            if page.locator(f".{menu_cls} .kadi-rengi").count() > 0:
+                                session.log("💬 Comments already visible")
+                            else:
+                                try:
+                                    count_btn = page.locator(f".{menu_cls} button.wbutton").first
+                                    count_btn.wait_for(state="visible", timeout=20000)
+                                    count_btn.click()
+                                    time.sleep(4)
+                                    session.log("💬 Comments loaded")
+                                except:
+                                    try:
+                                        snippet = page.inner_text(f".{menu_cls}")[:150]
+                                        session.log(f"⚠️ 💬 button not found. Panel: {snippet}")
+                                    except:
+                                        session.log("⚠️ 💬 button not found, panel unreadable")
+                                    time.sleep(3)
+                                    continue
 
                             # C: Find target username, select 100, click heart
                             try:
