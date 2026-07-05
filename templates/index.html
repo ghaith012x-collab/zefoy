@@ -86,7 +86,7 @@ body { background:#0a0a1a; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-
             <option value="followers">👥 Followers</option>
         </select>
         <input type="text" id="urlInput" placeholder="Paste TikTok URL...">
-        <input type="text" id="commentUrlInput" placeholder="Paste TikTok comment link..." style="display:none">
+        <input type="text" id="usernameInput" placeholder="Username to send hearts to..." style="display:none">
 
         <div class="tabs-group">
             <label>Tabs:</label>
@@ -103,12 +103,12 @@ const sessionsEl = document.getElementById('sessions');
 
 const serviceSelect = document.getElementById('serviceSelect');
 const urlInput = document.getElementById('urlInput');
-const commentUrlInput = document.getElementById('commentUrlInput');
+const usernameInput = document.getElementById('usernameInput');
 serviceSelect.addEventListener('change', () => {
     const isComment = serviceSelect.value === 'comment_hearts';
     urlInput.placeholder = isComment ? 'Paste TikTok video link...' : 'Paste TikTok URL...';
-    commentUrlInput.style.display = isComment ? '' : 'none';
-    if (!isComment) commentUrlInput.value = '';
+    usernameInput.style.display = isComment ? '' : 'none';
+    if (!isComment) usernameInput.value = '';
 });
 const globalStats = document.getElementById('globalStats');
 const cards = {};
@@ -119,13 +119,13 @@ const BADGE_CLASS = {hearts:'badge-hearts',views:'badge-views',comment_hearts:'b
 function startSession() {
     const url = document.getElementById('urlInput').value.trim();
     const service = document.getElementById('serviceSelect').value;
-    const commentUrl = document.getElementById('commentUrlInput').value.trim();
+    const username = document.getElementById('usernameInput').value.trim();
     const tabs = parseInt(document.getElementById('tabsInput').value) || 1;
     if (!url) return alert('Paste a TikTok URL first!');
-    if (service === 'comment_hearts' && !commentUrl) return alert('Paste the comment link too!');
+    if (service === 'comment_hearts' && !username) return alert('Enter the username to heart!');
 
     const payload = {url, service, tabs};
-    if (commentUrl) payload.comment_url = commentUrl;
+    if (username) payload.username = username;
 
     fetch('/start', {
         method: 'POST',
@@ -163,7 +163,7 @@ function createCard(s) {
             <span>Cycles: <span id="cycles-${s.id}">0</span></span>
             ${(s.numTabs || 1) > 1 ? `<span>Tabs: <span id="activetabs-${s.id}">${s.numTabs}</span>/${s.numTabs}</span>` : ''}
         </div>
-        <div class="card-url">${s.url}${s.commentUrl ? '<br>💬 ' + s.commentUrl : ''}</div>
+        <div class="card-url">${s.url}${s.username ? '<br>👤 @' + s.username : ''}</div>
         ${tabsInfo}
         <div class="log-box" id="log-${s.id}"></div>
         <div class="countdown-bar" id="cd-${s.id}" style="display:none"></div>

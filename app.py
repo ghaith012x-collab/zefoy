@@ -408,14 +408,14 @@ class Session:
     _counter = 0
     _lock = threading.Lock()
 
-    def __init__(self, video_url, service="views", num_tabs=1, comment_url=""):
+    def __init__(self, video_url, service="views", num_tabs=1, username=""):
         with Session._lock:
             Session._counter += 1
             self.id = Session._counter
         self.video_url = video_url
         self.service = service  # key into SERVICES dict
-        self.comment_url = comment_url  # TikTok comment link for comment_hearts
-        self.comment_target = None  # Resolved comment info {comment_id, video_creator, ...}
+        self.username = username  # Target username for comment_hearts
+
         self.num_tabs = max(1, min(num_tabs, 5))  # clamp 1-5
         self.status = "starting"
         self.total_count = 0
@@ -455,7 +455,7 @@ class Session:
         return {
             "id": self.id,
             "url": self.video_url,
-            "commentUrl": self.comment_url,
+            "username": self.username,
             "service": self.service,
             "serviceName": self.svc["name"],
             "serviceEmoji": self.svc["emoji"],
@@ -829,64 +829,142 @@ def run_tab(session, tab_id):
                             time.sleep(3)
                             continue
 
-                        # ── Comment Hearts: select matching comment radio button ──
+                        # ── Comment Hearts: click 💬 button, find user, select 100, click heart ──
                         if session.service == "comment_hearts":
-                            target_comment_id = None
-                            if session.comment_target:
-                                target_comment_id = session.comment_target.get('comment_id')
-                                session.log(f"🎯 Looking for comment ID: {target_comment_id}")
+                            target_user = session.username.lstrip('@').lower()
 
-                            for _comment_wait in range(20):
+                            # A: Check for too many requests first
+                            try:
+                                body_check = page.inner_text("body").lower()
+                            except:
+                                session.log("💥 Page crash, restarting...")
+                                break
+                            if "too many" in body_check or "slow down" in body_check:
+                                session.log("⚠️ Too many requests, clicking Search...")
+                                try:
+                                    page.locator(submit_sel).first.click()
+                                except:
+                                    pass
+                                time.sleep(3)
+                                continue
+
+                            # B: Wait for 💬 count button and click it
+                            try:
+                                count_btn = page.locator(f".{menu_cls} button.wbutton").first
+                                count_btn.wait_for(state="visible", timeout=10000)
+                                count_btn.click()
+                                time.sleep(3)
+                                session.log("💬 Comments loaded")
+                            except:
+                                session.log("⚠️ 💬 button not found, retrying...")
+                                time.sleep(3)
+                                continue
+
+                            # C: Find target username, select 100, click heart
+                            try:
+                                result = page.evaluate("""(targetUser) => {
+                                    const forms = document.querySelectorAll('form.w1a');
+                                    const users = [];
+                                    for (let i = 0; i < forms.length; i++) {
+                                        const userEl = forms[i].querySelector('.kadi-rengi');
+                                        if (!userEl) continue;
+                                        const uname = userEl.innerText.trim().replace('@','').toLowerCase();
+                                        users.push(uname);
+                                        if (uname === targetUser) {
+                                            const sel = forms[i].querySelector('select[name="select_lmt"]');
+                                            if (sel) {
+                                                sel.value = '100';
+                                                sel.dispatchEvent(new Event('change', {bubbles:true}));
+                                            }
+                                            const btn = forms[i].querySelector('button[type="submit"]');
+                                            if (btn) btn.click();
+                                            return {found:true, index:i, total:forms.length, users:users};
+                                        }
+                                    }
+                                    return {found:false, total:forms.length, users:users};
+                                }""", target_user)
+
+                                if result.get('found'):
+                                    session.log(f"💬 Sending 100 hearts to @{target_user}")
+                                    time.sleep(3)
+                                else:
+                                    users = result.get('users', [])
+                                    session.log(f"⚠️ @{target_user} not found. Comments: {', '.join('@'+u for u in users[:5])}")
+                                    time.sleep(5)
+                                    continue
+                            except Exception as ce:
+                                err_s = str(ce).lower()
+                                if "crash" in err_s or "target closed" in err_s or "disposed" in err_s:
+                                    session.log("💥 Crashed during comment selection, restarting...")
+                                    break
+                                session.log(f"⚠️ Comment error: {ce}")
+                                time.sleep(3)
+                                continue
+
+                            # D: Handle response after comment heart submit
+                            for _resp in range(120):
                                 if session.stop_event.is_set():
                                     break
                                 try:
-                                    comment_result = page.evaluate("""(targetId) => {
-                                        const radios = document.querySelectorAll('input[type="radio"]');
-                                        if (radios.length === 0) return {status: 'no_comments'};
-                                        const allComments = [];
-                                        for (let i = 0; i < radios.length; i++) {
-                                            const row = radios[i].closest('tr, label, div, li') || radios[i].parentElement;
-                                            const rowText = row ? row.innerText.trim().substring(0, 80) : '';
-                                            allComments.push({idx: i, val: radios[i].value || '', text: rowText});
-                                        }
-                                        if (targetId) {
-                                            for (let i = 0; i < radios.length; i++) {
-                                                const radio = radios[i];
-                                                const val = radio.value || '';
-                                                const row = radio.closest('tr, label, div, li') || radio.parentElement;
-                                                const rowHtml = row ? row.innerHTML : '';
-                                                if (val.includes(targetId) || rowHtml.includes(targetId)) {
-                                                    radio.click();
-                                                    radio.checked = true;
-                                                    radio.dispatchEvent(new Event('change', {bubbles: true}));
-                                                    const rowText = row ? row.innerText.trim().substring(0, 80) : '';
-                                                    return {status: 'matched', count: radios.length, text: rowText, index: i, comments: allComments};
-                                                }
-                                            }
-                                        }
-                                        radios[0].click();
-                                        radios[0].checked = true;
-                                        radios[0].dispatchEvent(new Event('change', {bubbles: true}));
-                                        const row = radios[0].closest('tr, label, div, li') || radios[0].parentElement;
-                                        const rowText = row ? row.innerText.trim().substring(0, 80) : '';
-                                        return {status: 'fallback', count: radios.length, text: rowText, comments: allComments};
-                                    }""", target_comment_id)
+                                    body = page.inner_text("body")
+                                except:
+                                    break
+                                lower = body.lower()
 
-                                    status = comment_result.get('status', 'no_comments')
-                                    if status in ('matched', 'fallback'):
-                                        cnt = comment_result.get('count', 0)
-                                        text = comment_result.get('text', '')
-                                        session.log(f"✅ Selected comment ({cnt} found): {text[:50]}")
-                                        time.sleep(1)
+                                if "too many" in lower or "slow down" in lower:
+                                    session.log("⚠️ Too many requests, clicking Search...")
+                                    try:
+                                        page.locator(submit_sel).first.click()
+                                    except:
+                                        pass
+                                    time.sleep(3)
+                                    break
+
+                                if "successfully" in lower:
+                                    nums = re.findall(r'(\d[\d,]*)', body)
+                                    count = 100
+                                    for n in nums:
+                                        val = int(n.replace(',', ''))
+                                        if 1 <= val <= 10000:
+                                            count = val
+                                            break
+                                    session.add_count(count)
+                                    session.log(f"💬 +{count} hearts to @{target_user} (total: {session.total_count})")
+                                    time.sleep(2)
+                                    break
+
+                                if "please wait" in lower and ("minute" in lower or "second" in lower):
+                                    mins_m = re.search(r'(\d+)\s*minute', lower)
+                                    secs_m = re.search(r'(\d+)\s*second', lower)
+                                    mins = int(mins_m.group(1)) if mins_m else 0
+                                    secs = int(secs_m.group(1)) if secs_m else 0
+                                    wait_secs = mins * 60 + secs
+                                    if wait_secs > 0:
+                                        session.log(f"⏳ Waiting {mins}m {secs}s...")
+                                        session.countdown = f"{mins}m {secs}s"
+                                        time.sleep(wait_secs + 2)
+                                        session.countdown = ""
+                                        try:
+                                            page.locator(submit_sel).first.click()
+                                            time.sleep(1)
+                                            page.locator(submit_sel).first.click()
+                                        except:
+                                            pass
+                                        time.sleep(3)
                                         break
-                                    else:
+
+                                if "ready" in lower:
+                                    try:
+                                        page.locator(submit_sel).first.click()
                                         time.sleep(1)
-                                        continue
-                                except Exception as ce:
-                                    err_s = str(ce).lower()
-                                    if "crash" in err_s or "target closed" in err_s:
-                                        break
-                                    time.sleep(1)
+                                        page.locator(submit_sel).first.click()
+                                    except:
+                                        pass
+                                    time.sleep(3)
+                                    break
+
+                                time.sleep(1)
+                            continue  # Skip regular hearts response handler
 
                         # ── Step 2: Check what happened after Search ──
                         max_checks = 60
@@ -1125,20 +1203,16 @@ def start():
     data = request.get_json()
     url = data.get("url", "").strip()
     service = data.get("service", "views").strip().lower()
-    comment_url = data.get("comment_url", "").strip()
+    username = data.get("username", "").strip()
     tabs = int(data.get("tabs", 1))
     if not url:
         return jsonify({"error": "No URL provided"}), 400
     if service not in SERVICES:
         return jsonify({"error": f"Unknown service: {service}"}), 400
-    if service == "comment_hearts" and not comment_url:
-        return jsonify({"error": "Comment link is required for Comment Hearts"}), 400
+    if service == "comment_hearts" and not username:
+        return jsonify({"error": "Username is required for Comment Hearts"}), 400
 
-    session = Session(url, service=service, num_tabs=tabs, comment_url=comment_url)
-
-    # Resolve comment link to extract comment_id for matching
-    if comment_url:
-        session.comment_target = resolve_comment_link(comment_url)
+    session = Session(url, service=service, num_tabs=tabs, username=username)
 
     with sessions_lock:
         sessions[session.id] = session
