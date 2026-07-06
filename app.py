@@ -6,6 +6,15 @@ from io import BytesIO
 from collections import Counter, deque
 import numpy as np
 
+def _is_dead(e):
+    """Return True if the exception means the browser/page is gone."""
+    s = str(e).lower()
+    t = type(e).__name__.lower()
+    return ("target page" in s or "browser has been closed" in s or
+            "target closed" in s or "crash" in s or "disposed" in s or
+            "connection closed" in s or "browser disconnected" in s or
+            "targetclosed" in t)
+
 # Thread-local tab prefix for log messages
 _tab_prefix = threading.local()
 
@@ -585,7 +594,6 @@ def run_tab(session, tab_id):
                             "--disable-software-rasterizer",
                             "--disable-logging",
                             "--disable-hang-monitor",
-                            "--single-process",
                             "--disable-ipc-flooding-protection",
                             "--memory-pressure-off",
                         ],
@@ -678,7 +686,11 @@ def run_tab(session, tab_id):
                             pass
 
                         session.log(f"\u26a0\ufe0f Page not ready, reloading (attempt {page_attempt + 1}/10)...")
-                        page.reload(wait_until="domcontentloaded")
+                        try:
+                            page.reload(wait_until="domcontentloaded")
+                        except Exception as _reload_err:
+                            session.log(f"\u26a0\ufe0f Error: {_reload_err} \u2014 restarting tab...")
+                            break
                         time.sleep(10 + page_attempt * 3)
                     else:
                         session.log("\u26a0\ufe0f Page never became ready, restarting...")
@@ -741,8 +753,7 @@ def run_tab(session, tab_id):
                                     except: pass
                                     time.sleep(3)
                             except Exception as e:
-                                err_str = str(e).lower()
-                                if "crash" in err_str or "target closed" in err_str:
+                                if _is_dead(e):
                                     session.log(f"\U0001f4a5 Crashed during captcha, restarting...")
                                     break
                                 else:
@@ -848,8 +859,7 @@ def run_tab(session, tab_id):
                             page.locator(submit_sel).first.click()
                             time.sleep(3)
                         except Exception as fill_err:
-                            err_str = str(fill_err).lower()
-                            if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
+                            if _is_dead(fill_err):
                                 session.log("💥 Crashed filling URL, restarting...")
                                 break
                             session.log(f"⚠️ Error: {fill_err}")
@@ -971,8 +981,7 @@ def run_tab(session, tab_id):
                                         session.log(f"❌ @{target_user} not found in {total_scanned} comments ({pg + 1} pages)")
                                         break
                                 except Exception as ce:
-                                    err_s = str(ce).lower()
-                                    if "crash" in err_s or "target closed" in err_s or "disposed" in err_s:
+                                    if _is_dead(ce):
                                         crashed = True
                                         session.log("💥 Crashed during pagination, restarting...")
                                         break
@@ -1021,7 +1030,7 @@ def run_tab(session, tab_id):
                             try:
                                 body = page.inner_text("body")
                             except Exception as e:
-                                if "crash" in str(e).lower() or "target closed" in str(e).lower():
+                                if _is_dead(e):
                                     crashed = True
                                     break
                                 time.sleep(1)
@@ -1164,8 +1173,7 @@ def run_tab(session, tab_id):
 
 
             except Exception as inner_err:
-                err_str = str(inner_err).lower()
-                if "crash" in err_str or "target closed" in err_str or "disposed" in err_str:
+                if _is_dead(inner_err):
                     session.log(f"\U0001f4a5 Browser crashed, restarting tab...")
                 else:
                     session.log(f"\u26a0\ufe0f Error: {inner_err} \u2014 restarting tab...")
