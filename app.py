@@ -534,6 +534,11 @@ def run_tab(session, tab_id):
                 time.sleep(wait_time)
                 backoff = min(backoff * 1.5, 30)
                 gc.collect()
+                # Force a fresh Tor IP on every restart so a blocked/dead exit
+                # node isn't reused.
+                if USING_TOR:
+                    session.log("🧅 Requesting fresh Tor IP...")
+                    renew_tor_circuit()
             else:
                 if multi:
                     session.log(f"\U0001f680 Starting tab...")
