@@ -13,6 +13,8 @@ def _is_dead(e):
     return ("target page" in s or "browser has been closed" in s or
             "target closed" in s or "crash" in s or "disposed" in s or
             "connection closed" in s or "browser disconnected" in s or
+            "frame was detached" in s or "err_aborted" in s or
+            "net::err" in s or "page crash" in s or
             "targetclosed" in t)
 
 # Thread-local tab prefix for log messages
@@ -20,7 +22,7 @@ _tab_prefix = threading.local()
 
 # Global limit: max Chromium browsers across ALL sessions at once.
 # Override via MAX_BROWSERS env var (e.g. set to a lower value on small instances).
-MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "20"))
+MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "6"))
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
 _active_browsers_lock = threading.Lock()
@@ -631,7 +633,11 @@ def run_tab(session, tab_id):
 
                     # \u2500\u2500 Load zefoy \u2500\u2500
                     session.log("\U0001f310 Loading zefoy.com...")
-                    page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
+                    try:
+                        page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
+                    except Exception as _goto_err:
+                        session.log(f"\U0001f4a5 Page crashed on load ({_goto_err}), restarting...")
+                        continue
                     time.sleep(5)
 
                     if not _safe_check(page):
@@ -1176,9 +1182,9 @@ def run_tab(session, tab_id):
                 if _is_dead(inner_err):
                     session.log(f"\U0001f4a5 Browser crashed, restarting tab...")
                 else:
+                    import traceback
                     session.log(f"\u26a0\ufe0f Error: {inner_err} \u2014 restarting tab...")
-                import traceback
-                traceback.print_exc()
+                    traceback.print_exc()
             finally:
                 try:
                     if browser:
