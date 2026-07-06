@@ -882,7 +882,11 @@ def run_tab(session, tab_id):
                                     count_btn = page.locator(f".{menu_cls} button.wbutton").first
                                     count_btn.wait_for(state="visible", timeout=20000)
                                     count_btn.click()
-                                    time.sleep(4)
+                                    # Smart wait: wait for comments to appear in DOM instead of fixed sleep
+                                    try:
+                                        page.locator(f".{menu_cls} .kadi-rengi").first.wait_for(state="visible", timeout=10000)
+                                    except:
+                                        time.sleep(1)  # brief fallback
                                     session.log("💬 Comments loaded")
                                 except:
                                     try:
@@ -898,51 +902,120 @@ def run_tab(session, tab_id):
                                     time.sleep(3)
                                     continue
 
-                            # C: Find target username — paginate through ALL comment pages
+                            # C: Find target username — FAST paginate through ALL comment pages
                             found_user = False
                             crashed = False
                             max_pages = 250  # up to ~10,000 comments at 40/page
-                            for pg in range(max_pages):
+                            pages_per_batch = 5  # scan+paginate 5 pages per JS call
+                            total_pages_scanned = 0
+
+                            while total_pages_scanned < max_pages:
                                 if session.stop_event.is_set():
                                     break
                                 try:
-                                    result = page.evaluate("""(targetUser) => {
-                                        const forms = document.querySelectorAll('form.w1a');
-                                        const users = [];
-                                        for (let i = 0; i < forms.length; i++) {
-                                            const userEl = forms[i].querySelector('.kadi-rengi');
-                                            if (!userEl) continue;
-                                            const uname = userEl.innerText.trim().replace('@','').toLowerCase();
-                                            users.push(uname);
-                                            if (uname === targetUser) {
-                                                return {found: true, index: i, total: forms.length};
+                                    # Batch scan: search current page, if not found click Next
+                                    # and repeat — all inside one JS evaluate to avoid round-trips
+                                    result = page.evaluate("""(args) => {
+                                        const targetUser = args.target;
+                                        const batchSize = args.batch;
+                                        let pagesScanned = 0;
+
+                                        function scanCurrentPage() {
+                                            const forms = document.querySelectorAll('form.w1a');
+                                            for (let i = 0; i < forms.length; i++) {
+                                                const userEl = forms[i].querySelector('.kadi-rengi');
+                                                if (!userEl) continue;
+                                                const uname = userEl.innerText.trim().replace('@','').toLowerCase();
+                                                if (uname === targetUser) {
+                                                    return {found: true, index: i, total: forms.length, pagesScanned: pagesScanned};
+                                                }
                                             }
+                                            return {found: false, total: forms.length};
                                         }
-                                        const nextBtn = document.querySelector('li[title="Next"] button');
-                                        const hasNext = nextBtn && !nextBtn.disabled;
-                                        return {found: false, total: forms.length, users: users, hasNext: hasNext};
-                                    }""", target_user)
+
+                                        // Scan current page first
+                                        const firstScan = scanCurrentPage();
+                                        if (firstScan.found) return firstScan;
+                                        pagesScanned++;
+
+                                        // For remaining batch pages, click Next and scan
+                                        for (let p = 1; p < batchSize; p++) {
+                                            const nextBtn = document.querySelector('li[title="Next"] button');
+                                            if (!nextBtn || nextBtn.disabled) {
+                                                return {found: false, pagesScanned: pagesScanned, hasNext: false, total: firstScan.total};
+                                            }
+                                            nextBtn.click();
+                                            pagesScanned++;
+                                        }
+
+                                        // Check if there's a next button after all clicks
+                                        const finalNext = document.querySelector('li[title="Next"] button');
+                                        const hasNext = finalNext && !finalNext.disabled;
+                                        return {found: false, pagesScanned: pagesScanned, hasNext: hasNext, total: firstScan.total};
+                                    }""", {"target": target_user, "batch": pages_per_batch})
 
                                     if result.get('found'):
                                         idx = result['index']
                                         form_loc = page.locator(f".{menu_cls} form.w1a").nth(idx)
                                         form_loc.locator("select[name='select_lmt']").select_option("100")
-                                        time.sleep(1)
+                                        time.sleep(0.5)
                                         form_loc.locator("button[type='submit']").click()
-                                        session.log(f"💬 Sent 100 hearts to @{target_user} (page {pg + 1})")
+                                        found_page = total_pages_scanned + 1
+                                        session.log(f"💬 Sent 100 hearts to @{target_user} (found on page {found_page})")
                                         found_user = True
-                                        time.sleep(3)
+                                        time.sleep(2)
                                         break
 
-                                    if result.get('hasNext'):
-                                        if pg == 0:
-                                            session.log(f"🔍 @{target_user} not on page 1, paginating...")
-                                        page.locator('li[title="Next"] button').click()
-                                        time.sleep(4)
-                                    else:
-                                        total_scanned = (pg * 40) + result.get('total', 0)
-                                        session.log(f"❌ @{target_user} not found in {total_scanned} comments ({pg + 1} pages)")
+                                    batch_scanned = result.get('pagesScanned', 1)
+                                    total_pages_scanned += batch_scanned
+
+                                    if total_pages_scanned == 1:
+                                        session.log(f"🔍 @{target_user} not on page 1, fast-scanning...")
+
+                                    # Progress log every 10 pages
+                                    if total_pages_scanned % 10 == 0:
+                                        session.log(f"🔍 Scanned {total_pages_scanned} pages...")
+
+                                    if not result.get('hasNext', False):
+                                        total_comments = total_pages_scanned * 40
+                                        session.log(f"❌ @{target_user} not found in ~{total_comments} comments ({total_pages_scanned} pages)")
                                         break
+
+                                    # Brief wait for DOM to update after batch pagination clicks
+                                    # Much faster than 4s per page — the JS clicks already fired
+                                    time.sleep(0.8)
+
+                                    # Wait for fresh forms to appear after pagination
+                                    try:
+                                        page.locator(f".{menu_cls} form.w1a").first.wait_for(state="attached", timeout=3000)
+                                    except:
+                                        time.sleep(0.5)
+
+                                    # After DOM settles, do a final scan of THIS page before next batch
+                                    final_check = page.evaluate("""(targetUser) => {
+                                        const forms = document.querySelectorAll('form.w1a');
+                                        for (let i = 0; i < forms.length; i++) {
+                                            const userEl = forms[i].querySelector('.kadi-rengi');
+                                            if (!userEl) continue;
+                                            const uname = userEl.innerText.trim().replace('@','').toLowerCase();
+                                            if (uname === targetUser) {
+                                                return {found: true, index: i};
+                                            }
+                                        }
+                                        return {found: false};
+                                    }""", target_user)
+
+                                    if final_check.get('found'):
+                                        idx = final_check['index']
+                                        form_loc = page.locator(f".{menu_cls} form.w1a").nth(idx)
+                                        form_loc.locator("select[name='select_lmt']").select_option("100")
+                                        time.sleep(0.5)
+                                        form_loc.locator("button[type='submit']").click()
+                                        session.log(f"💬 Sent 100 hearts to @{target_user} (found on page {total_pages_scanned})")
+                                        found_user = True
+                                        time.sleep(2)
+                                        break
+
                                 except Exception as ce:
                                     err_s = str(ce).lower()
                                     if "crash" in err_s or "target closed" in err_s or "disposed" in err_s:
@@ -955,7 +1028,7 @@ def run_tab(session, tab_id):
                             if crashed:
                                 break
                             if not found_user:
-                                time.sleep(2)
+                                time.sleep(1)
                                 try:
                                     page.locator(submit_sel).first.click()
                                 except:
@@ -976,7 +1049,7 @@ def run_tab(session, tab_id):
                                 session.log("⚠️ Too many requests")
 
                             # Click Search to go again
-                            time.sleep(2)
+                            time.sleep(1)
                             try:
                                 page.locator(submit_sel).first.click()
                             except:
