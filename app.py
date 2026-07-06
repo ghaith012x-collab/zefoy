@@ -534,6 +534,11 @@ def run_tab(session, tab_id):
                 time.sleep(wait_time)
                 backoff = min(backoff * 1.5, 30)
                 gc.collect()
+                # Force a fresh Tor IP on every restart so a blocked/dead exit
+                # node isn't reused.
+                if USING_TOR:
+                    session.log("🧅 Requesting fresh Tor IP...")
+                    renew_tor_circuit()
             else:
                 if multi:
                     session.log(f"\U0001f680 Starting tab...")
@@ -767,6 +772,8 @@ def run_tab(session, tab_id):
 
                     backoff = 5
                     url_filled = False
+                    input_fail_count = 0
+                    MAX_INPUT_FAILS = 5
 
                     # ── Main loop ──
                     while not session.stop_event.is_set():
@@ -790,6 +797,7 @@ def run_tab(session, tab_id):
 
                             try:
                                 url_input.wait_for(state="visible", timeout=5000)
+                                input_fail_count = 0
                             except:
                                 # Input not visible — re-open panel
                                 session.log(f"⚠️ Input not visible, re-opening {svc_name} panel...")
@@ -797,8 +805,26 @@ def run_tab(session, tab_id):
                                     page.locator(f".{btn_cls}").click()
                                     time.sleep(2)
                                     url_input.wait_for(state="visible", timeout=10000)
+                                    input_fail_count = 0
                                 except:
-                                    session.log(f"⚠️ Still can't find input after re-open, retrying...")
+                                    input_fail_count += 1
+                                    # Detect why the panel is broken: zefoy down, session
+                                    # kicked back to captcha, or page navigated away
+                                    try:
+                                        body_snip = page.inner_text("body")[:300].lower()
+                                    except:
+                                        session.log("💥 Page unreadable, restarting browser...")
+                                        break
+                                    if "502" in body_snip or "bad gateway" in body_snip or "503" in body_snip:
+                                        session.log("🔴 Zefoy is down (502/503), restarting browser...")
+                                        break
+                                    if page.locator("#captcha-img, img[src*='captcha'], img[src*='CAPTCHA']").count() > 0:
+                                        session.log("🔐 Session expired (captcha shown again), restarting browser...")
+                                        break
+                                    if input_fail_count >= MAX_INPUT_FAILS:
+                                        session.log(f"❌ Input not found after {MAX_INPUT_FAILS} attempts, restarting browser...")
+                                        break
+                                    session.log(f"⚠️ Still can't find input after re-open, retrying ({input_fail_count}/{MAX_INPUT_FAILS})...")
                                     time.sleep(3)
                                     continue
                                 url_filled = False  # panel reopened, need to fill again
