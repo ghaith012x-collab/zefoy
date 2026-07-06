@@ -4,66 +4,174 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Zefoy Bot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+:root {
+    --bg:#070711;
+    --panel:rgba(20,20,45,0.55);
+    --panel-solid:#12122e;
+    --border:rgba(124,92,255,0.18);
+    --accent:#8b5cf6;
+    --accent2:#4f46e5;
+    --text:#e7e7f5;
+    --muted:#8a8ab0;
+    --good:#34d399;
+}
 * { margin:0; padding:0; box-sizing:border-box; }
-body { background:#0a0a1a; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; }
-.header { background:linear-gradient(135deg,#1a1a3e,#0d0d2b); padding:20px; text-align:center; border-bottom:1px solid #2a2a5a; position:sticky; top:0; z-index:100; }
-.header h1 { font-size:1.6rem; color:#a78bfa; display:inline; }
-.header h1::before { content:"⚡ "; }
-.header .stats { color:#888; font-size:0.9rem; margin-left:16px; }
+html { scroll-behavior:smooth; }
+body {
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter',system-ui,sans-serif;
+    min-height:100vh;
+    position:relative;
+    overflow-x:hidden;
+}
+/* Animated aurora background */
+body::before {
+    content:"";
+    position:fixed; inset:-30%;
+    background:
+        radial-gradient(40% 40% at 20% 20%, rgba(139,92,246,0.22), transparent 60%),
+        radial-gradient(40% 40% at 80% 25%, rgba(6,182,212,0.16), transparent 60%),
+        radial-gradient(45% 45% at 50% 85%, rgba(79,70,229,0.20), transparent 60%);
+    z-index:-1;
+    animation:drift 22s ease-in-out infinite alternate;
+    filter:blur(20px);
+}
+@keyframes drift {
+    0%   { transform:translate3d(0,0,0) scale(1); }
+    50%  { transform:translate3d(-4%,3%,0) scale(1.08); }
+    100% { transform:translate3d(4%,-3%,0) scale(1.03); }
+}
 
-.controls { max-width:700px; margin:20px auto; padding:0 16px; }
+.header {
+    background:linear-gradient(135deg, rgba(26,26,62,0.85), rgba(13,13,43,0.85));
+    backdrop-filter:blur(14px);
+    padding:18px 24px;
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
+    border-bottom:1px solid var(--border);
+    position:sticky; top:0; z-index:100;
+}
+.header h1 {
+    font-size:1.5rem; font-weight:800; letter-spacing:-0.5px;
+    background:linear-gradient(90deg,#c4b5fd,#818cf8,#22d3ee);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    display:flex; align-items:center; gap:8px;
+}
+.header h1 .bolt { -webkit-text-fill-color:initial; filter:drop-shadow(0 0 6px rgba(139,92,246,0.8)); }
+.header .stats { display:flex; gap:14px; flex-wrap:wrap; font-size:0.82rem; color:var(--muted); }
+.header .stats .pill {
+    background:rgba(139,92,246,0.12); border:1px solid var(--border);
+    padding:5px 12px; border-radius:99px; font-weight:600;
+    display:flex; align-items:center; gap:6px;
+}
+.header .stats .pill b { color:var(--text); font-weight:700; }
+
+.controls { max-width:820px; margin:28px auto 8px; padding:0 16px; }
+.control-card {
+    background:var(--panel); backdrop-filter:blur(14px);
+    border:1px solid var(--border); border-radius:18px;
+    padding:16px; box-shadow:0 10px 40px rgba(0,0,0,0.35);
+}
 .control-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-.control-row select, .control-row input[type="text"], .control-row input[type="number"] { background:#1a1a3e; border:1px solid #333; color:#e0e0e0; padding:10px 14px; border-radius:8px; font-size:0.95rem; }
-.control-row select { min-width:120px; }
-.control-row input[type="text"] { flex:1; min-width:180px; }
-.control-row input[type="number"] { width:70px; text-align:center; }
-.tabs-group { display:flex; align-items:center; gap:4px; }
-.tabs-group label { color:#888; font-size:0.8rem; white-space:nowrap; }
-.btn-start { background:linear-gradient(135deg,#6d28d9,#4f46e5); color:#fff; border:none; padding:10px 24px; border-radius:8px; cursor:pointer; font-size:0.95rem; font-weight:600; transition:all 0.2s; }
-.btn-start:hover { transform:translateY(-1px); box-shadow:0 4px 15px rgba(109,40,217,0.4); }
+.control-row select, .control-row input[type="text"], .control-row input[type="number"] {
+    background:rgba(10,10,26,0.7); border:1px solid rgba(255,255,255,0.08); color:var(--text);
+    padding:11px 14px; border-radius:12px; font-size:0.95rem; font-family:inherit;
+    transition:border-color 0.2s, box-shadow 0.2s; outline:none;
+}
+.control-row select:focus, .control-row input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(139,92,246,0.22); }
+.control-row select { min-width:150px; cursor:pointer; }
+.control-row input[type="text"] { flex:1; min-width:200px; }
+.control-row input[type="number"] { width:78px; text-align:center; }
+.tabs-group { display:flex; align-items:center; gap:8px; }
+.tabs-group label { color:var(--muted); font-size:0.8rem; white-space:nowrap; }
+.btn-start {
+    background:linear-gradient(135deg,#7c3aed,#4f46e5); color:#fff; border:none;
+    padding:11px 26px; border-radius:12px; cursor:pointer; font-size:0.95rem; font-weight:700;
+    transition:transform 0.15s, box-shadow 0.2s; font-family:inherit;
+}
+.btn-start:hover { transform:translateY(-2px); box-shadow:0 8px 22px rgba(109,40,217,0.5); }
+.btn-start:active { transform:translateY(0); }
 
-.sessions { max-width:1200px; margin:20px auto; padding:0 16px; display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:16px; }
+.sessions { max-width:1320px; margin:22px auto 60px; padding:0 16px; display:grid; grid-template-columns:repeat(auto-fill, minmax(350px, 1fr)); gap:18px; }
+.empty { text-align:center; color:var(--muted); padding:60px 20px; font-size:0.95rem; grid-column:1/-1; }
 
-.card { background:#111133; border:1px solid #2a2a5a; border-radius:12px; padding:16px; position:relative; display:flex; flex-direction:column; }
-.card-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; flex-wrap:wrap; gap:6px; }
-.card-id { font-weight:700; color:#a78bfa; font-size:1.1rem; }
-.card-badge { padding:2px 10px; border-radius:99px; font-size:0.75rem; font-weight:600; text-transform:uppercase; }
-.badge-views { background:#6d28d9; color:#fff; }
-.badge-comment_hearts { background:#7c3aed; color:#fff; }
-.badge-shares { background:#0891b2; color:#fff; }
-.badge-favorites { background:#d97706; color:#fff; }
-.badge-followers { background:#059669; color:#fff; }
-.badge-hearts { background:#ef4444; color:#fff; }
-.card-stats { font-size:0.85rem; color:#bbb; margin-bottom:4px; }
-.card-stats span { margin-right:12px; }
-.card-stats .count { color:#34d399; font-weight:700; }
-.card-url { font-size:0.75rem; color:#666; word-break:break-all; margin-bottom:8px; }
-.card-tabs-info { font-size:0.75rem; color:#a78bfa; margin-bottom:4px; }
+.card {
+    background:var(--panel); backdrop-filter:blur(14px);
+    border:1px solid var(--border); border-radius:18px; padding:18px;
+    position:relative; display:flex; flex-direction:column;
+    box-shadow:0 8px 30px rgba(0,0,0,0.35);
+    animation:cardIn 0.35s cubic-bezier(0.2,0.8,0.2,1);
+    transition:transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.card:hover { transform:translateY(-3px); border-color:rgba(139,92,246,0.4); box-shadow:0 14px 40px rgba(88,40,180,0.28); }
+.card::before {
+    content:""; position:absolute; inset:0 0 auto 0; height:3px; border-radius:18px 18px 0 0;
+    background:linear-gradient(90deg,var(--accent),var(--accent2),#22d3ee); opacity:0.85;
+}
+@keyframes cardIn { from { opacity:0; transform:translateY(12px) scale(0.98); } to { opacity:1; transform:none; } }
 
-.status-badge { padding:2px 8px; border-radius:4px; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }
-.status-running { background:#059669; color:#fff; }
-.status-starting { background:#d97706; color:#fff; }
-.status-stopping { background:#9333ea; color:#fff; }
-.status-stopped { background:#555; color:#ccc; }
-.status-error { background:#dc2626; color:#fff; }
+.card-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; gap:8px; }
+.card-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.card-id { font-weight:800; color:#c4b5fd; font-size:1.05rem; }
+.card-badge { padding:3px 11px; border-radius:99px; font-size:0.72rem; font-weight:700; letter-spacing:0.3px; box-shadow:0 2px 10px rgba(0,0,0,0.3); }
+.badge-views { background:linear-gradient(135deg,#7c3aed,#6d28d9); color:#fff; }
+.badge-comment_hearts { background:linear-gradient(135deg,#8b5cf6,#7c3aed); color:#fff; }
+.badge-shares { background:linear-gradient(135deg,#06b6d4,#0891b2); color:#fff; }
+.badge-favorites { background:linear-gradient(135deg,#f59e0b,#d97706); color:#fff; }
+.badge-followers { background:linear-gradient(135deg,#10b981,#059669); color:#fff; }
+.badge-hearts { background:linear-gradient(135deg,#f43f5e,#ef4444); color:#fff; }
 
-.btn-stop { background:#dc2626; color:#fff; border:none; padding:4px 14px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; }
-.btn-stop:hover { background:#b91c1c; }
-.btn-remove { background:none; border:1px solid #555; color:#888; padding:4px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem; }
-.btn-remove:hover { border-color:#dc2626; color:#dc2626; }
+.card-actions { display:flex; align-items:center; gap:6px; }
+.status-badge { padding:3px 9px; border-radius:6px; font-size:0.68rem; font-weight:800; text-transform:uppercase; letter-spacing:0.6px; display:inline-flex; align-items:center; gap:5px; }
+.status-badge .dot { width:7px; height:7px; border-radius:50%; background:currentColor; }
+.status-running { background:rgba(5,150,105,0.18); color:#34d399; }
+.status-running .dot { animation:pulse 1.2s ease-in-out infinite; }
+.status-starting { background:rgba(217,119,6,0.18); color:#fbbf24; }
+.status-starting .dot { animation:pulse 1.2s ease-in-out infinite; }
+.status-stopping { background:rgba(147,51,234,0.18); color:#c084fc; }
+.status-stopped { background:rgba(120,120,120,0.18); color:#aaa; }
+.status-error { background:rgba(220,38,38,0.18); color:#f87171; }
+@keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.35; transform:scale(0.7); } }
 
-.log-box { background:#0a0a1a; border:1px solid #222; border-radius:8px; padding:10px; margin-top:8px; max-height:200px; overflow-y:auto; font-family:'Fira Code',monospace; font-size:0.75rem; line-height:1.6; flex:1; }
-.log-box div { white-space:pre-wrap; word-break:break-word; }
-.log-box .tab-prefix { color:#a78bfa; font-weight:600; }
+.btn-stop, .btn-remove {
+    border:none; padding:5px 12px; border-radius:8px; cursor:pointer; font-size:0.78rem; font-weight:700; font-family:inherit;
+    display:inline-flex; align-items:center; gap:4px; transition:all 0.15s;
+}
+.btn-stop { background:rgba(220,38,38,0.15); color:#f87171; border:1px solid rgba(220,38,38,0.35); }
+.btn-stop:hover { background:#dc2626; color:#fff; }
+.btn-remove { background:rgba(255,255,255,0.05); color:var(--muted); border:1px solid rgba(255,255,255,0.12); }
+.btn-remove:hover { background:rgba(220,38,38,0.9); color:#fff; border-color:transparent; }
 
-.countdown-bar { background:#1a1a3e; border:1px solid #4f46e5; border-radius:6px; padding:6px 12px; margin-top:6px; font-size:0.85rem; color:#a78bfa; text-align:center; font-weight:600; }
+.card-metrics { display:flex; gap:10px; margin-bottom:12px; }
+.metric {
+    flex:1; background:rgba(10,10,26,0.5); border:1px solid rgba(255,255,255,0.06);
+    border-radius:12px; padding:10px 12px; text-align:center;
+}
+.metric .val { font-size:1.35rem; font-weight:800; line-height:1.1; color:var(--text); font-variant-numeric:tabular-nums; }
+.metric.count-metric .val { color:var(--good); }
+.metric .lbl { font-size:0.66rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.6px; margin-top:3px; }
+
+.card-url { font-size:0.74rem; color:var(--muted); word-break:break-all; margin-bottom:8px; background:rgba(10,10,26,0.4); padding:7px 10px; border-radius:8px; }
+.card-url .u { color:#a5b4fc; }
+.card-tabs-info { font-size:0.72rem; color:#c4b5fd; margin-bottom:8px; display:flex; align-items:center; gap:5px; }
+
+.log-box { background:rgba(5,5,16,0.7); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:10px 12px; margin-top:auto; max-height:210px; overflow-y:auto; font-family:'JetBrains Mono',monospace; font-size:0.74rem; line-height:1.65; }
+.log-box div { white-space:pre-wrap; word-break:break-word; opacity:0; animation:logIn 0.25s forwards; }
+@keyframes logIn { to { opacity:1; } }
+.log-box .tab-prefix { color:#8b5cf6; font-weight:600; }
+.log-box::-webkit-scrollbar { width:7px; }
+.log-box::-webkit-scrollbar-thumb { background:rgba(139,92,246,0.4); border-radius:99px; }
+
+.countdown-bar { background:linear-gradient(135deg,rgba(79,70,229,0.2),rgba(139,92,246,0.15)); border:1px solid rgba(79,70,229,0.5); border-radius:10px; padding:8px 12px; margin-top:8px; font-size:0.9rem; color:#c4b5fd; text-align:center; font-weight:700; letter-spacing:0.3px; }
 
 @media(max-width:600px) {
     .sessions { grid-template-columns:1fr; }
-    .control-row { flex-direction:column; }
+    .control-row { flex-direction:column; align-items:stretch; }
     .control-row select, .control-row input[type="text"], .control-row input[type="number"] { width:100%; }
-    .tabs-group { width:100%; }
+    .tabs-group { width:100%; justify-content:space-between; }
     .tabs-group input { flex:1; }
 }
 </style>
@@ -71,11 +179,16 @@ body { background:#0a0a1a; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-
 <body>
 
 <div class="header">
-    <h1>Zefoy Bot</h1>
-    <span class="stats" id="globalStats">Active: 0 &nbsp; Total: 0</span>
+    <h1><span class="bolt">⚡</span> Zefoy Bot</h1>
+    <div class="stats" id="globalStats">
+        <span class="pill">Active <b id="statActive">0</b></span>
+        <span class="pill">Sessions <b id="statTotal">0</b></span>
+        <span class="pill">🌐 Browsers <b id="statBrowsers">0/20</b></span>
+    </div>
 </div>
 
 <div class="controls">
+  <div class="control-card">
     <div class="control-row">
         <select id="serviceSelect">
             <option value="hearts">❤️ Hearts</option>
@@ -89,11 +202,12 @@ body { background:#0a0a1a; color:#e0e0e0; font-family:'Segoe UI',system-ui,sans-
         <input type="text" id="usernameInput" placeholder="Username to send hearts to..." style="display:none">
 
         <div class="tabs-group">
-            <label>Tabs:</label>
-            <input type="number" id="tabsInput" value="1" min="1" max="10">
+            <label>Browsers:</label>
+            <input type="number" id="tabsInput" value="1" min="1" max="20">
         </div>
         <button class="btn-start" onclick="startSession()">▶ Start</button>
     </div>
+  </div>
 </div>
 
 <div class="sessions" id="sessions"></div>
@@ -110,11 +224,24 @@ serviceSelect.addEventListener('change', () => {
     usernameInput.style.display = isComment ? '' : 'none';
     if (!isComment) usernameInput.value = '';
 });
-const globalStats = document.getElementById('globalStats');
 const cards = {};
 const MAX_LOG_LINES = 200;
 
 const BADGE_CLASS = {hearts:'badge-hearts',views:'badge-views',comment_hearts:'badge-comment_hearts',shares:'badge-shares',favorites:'badge-favorites',followers:'badge-followers'};
+
+function updateEmptyState() {
+    const hasCards = Object.keys(cards).length > 0;
+    let empty = document.getElementById('emptyState');
+    if (!hasCards && !empty) {
+        empty = document.createElement('div');
+        empty.id = 'emptyState';
+        empty.className = 'empty';
+        empty.innerHTML = '🚀 No sessions yet — pick a category, paste a TikTok URL, and hit Start.';
+        sessionsEl.appendChild(empty);
+    } else if (hasCards && empty) {
+        empty.remove();
+    }
+}
 
 function startSession() {
     const url = document.getElementById('urlInput').value.trim();
@@ -145,25 +272,27 @@ function createCard(s) {
     div.id = 'card-' + s.id;
 
     const badgeCls = BADGE_CLASS[s.service] || 'badge-views';
-    const tabsInfo = (s.numTabs || 1) > 1 ? `<div class="card-tabs-info">🔀 ${s.numTabs} tabs (each with unique IP)</div>` : '';
+    const nTabs = s.numTabs || 1;
+    const tabsInfo = nTabs > 1 ? `<div class="card-tabs-info">🔀 ${nTabs} browsers · each on a unique IP</div>` : '';
 
     div.innerHTML = `
         <div class="card-header">
-            <span>
+            <div class="card-title">
                 <span class="card-id">#${s.id}</span>
                 <span class="card-badge ${badgeCls}">${s.serviceEmoji} ${s.serviceName}</span>
-            </span>
-            <span>
+            </div>
+            <div class="card-actions">
+                <span class="status-badge status-starting" id="status-${s.id}"><span class="dot"></span>STARTING</span>
                 <button class="btn-stop" onclick="stopSession(${s.id})" id="stopBtn-${s.id}">■ Stop</button>
-                <span class="status-badge status-starting" id="status-${s.id}">STARTING</span>
-            </span>
+                <button class="btn-remove" onclick="deleteSession(${s.id})" title="Delete session">✕</button>
+            </div>
         </div>
-        <div class="card-stats">
-            <span>${s.serviceName}: <span class="count" id="count-${s.id}">0</span></span>
-            <span>Cycles: <span id="cycles-${s.id}">0</span></span>
-            ${(s.numTabs || 1) > 1 ? `<span>Tabs: <span id="activetabs-${s.id}">${s.numTabs}</span>/${s.numTabs}</span>` : ''}
+        <div class="card-metrics">
+            <div class="metric count-metric"><div class="val" id="count-${s.id}">0</div><div class="lbl">${s.serviceName}</div></div>
+            <div class="metric"><div class="val" id="cycles-${s.id}">0</div><div class="lbl">Cycles</div></div>
+            ${nTabs > 1 ? `<div class="metric"><div class="val"><span id="activetabs-${s.id}">${nTabs}</span>/${nTabs}</div><div class="lbl">Browsers</div></div>` : ''}
         </div>
-        <div class="card-url">${s.url}${s.username ? '<br>👤 @' + s.username : ''}</div>
+        <div class="card-url">🔗 <span class="u">${s.url}</span>${s.username ? '<br>👤 @' + s.username : ''}</div>
         ${tabsInfo}
         <div class="log-box" id="log-${s.id}"></div>
         <div class="countdown-bar" id="cd-${s.id}" style="display:none"></div>
@@ -179,22 +308,33 @@ function createCard(s) {
         activeTabs: div.querySelector('#activetabs-' + s.id),
         card: div,
         logCount: 0,
-        numTabs: s.numTabs || 1,
+        numTabs: nTabs,
     };
+    updateEmptyState();
 }
 
 function stopSession(sid) {
     fetch('/stop/' + sid, {method:'POST'});
 }
 
-function removeSession(sid) {
+function deleteSession(sid) {
     fetch('/remove/' + sid, {method:'POST'}).then(r => r.json()).then(d => {
-        if (d.ok) {
-            const c = document.getElementById('card-' + sid);
-            if (c) c.remove();
-            delete cards[sid];
-        }
+        if (d.ok) removeCard(sid);
     });
+}
+// kept for backwards-compat with any 'ended' handlers
+function removeSession(sid) { deleteSession(sid); }
+
+function removeCard(sid) {
+    const c = document.getElementById('card-' + sid);
+    if (c) {
+        c.style.transition = 'opacity 0.25s, transform 0.25s';
+        c.style.opacity = '0';
+        c.style.transform = 'scale(0.96)';
+        setTimeout(() => c.remove(), 220);
+    }
+    delete cards[sid];
+    setTimeout(() => { updateEmptyState(); updateGlobalStats(); }, 240);
 }
 
 function colorizeLog(text) {
@@ -243,33 +383,35 @@ evtSource.onmessage = function(e) {
 
         case 'stats':
             c.count.textContent = Number(msg.count).toLocaleString();
-            c.cycles.textContent = msg.cycles;
+            c.cycles.textContent = Number(msg.cycles).toLocaleString();
             const statusEl = c.status;
-            statusEl.textContent = msg.status.toUpperCase();
+            statusEl.innerHTML = '<span class="dot"></span>' + msg.status.toUpperCase();
             statusEl.className = 'status-badge status-' + msg.status;
 
-            if (['stopped','error'].includes(msg.status)) {
+            if (['stopped','error'].includes(msg.status) && c.stopBtn) {
                 c.stopBtn.style.display = 'none';
             }
             break;
 
         case 'ended':
-            c.stopBtn.outerHTML = `<button class="btn-remove" onclick="removeSession(${sid})">✕</button>`;
+            if (c.stopBtn) c.stopBtn.style.display = 'none';
             break;
     }
 
     updateGlobalStats();
 };
 
-let _globalBrowsers = 0, _maxBrowsers = 5;
+let _globalBrowsers = 0, _maxBrowsers = 20;
 function updateGlobalStats() {
     let active = 0, total = 0;
     for (const sid in cards) {
         total++;
-        const statusText = cards[sid].status?.textContent?.toLowerCase();
-        if (statusText === 'running' || statusText === 'starting') active++;
+        const statusText = cards[sid].status?.textContent?.toLowerCase() || '';
+        if (statusText.includes('running') || statusText.includes('starting')) active++;
     }
-    globalStats.textContent = `Active: ${active}   Total: ${total}   🌐 Browsers: ${_globalBrowsers}/${_maxBrowsers}`;
+    document.getElementById('statActive').textContent = active;
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statBrowsers').textContent = `${_globalBrowsers}/${_maxBrowsers}`;
 }
 setInterval(() => {
     fetch('/sessions').then(r => r.json()).then(data => {
@@ -277,7 +419,7 @@ setInterval(() => {
         if (data.maxBrowsers !== undefined) _maxBrowsers = data.maxBrowsers;
         updateGlobalStats();
     }).catch(() => {});
-}, 5000);
+}, 2000);
 
 function escapeHtml(text) {
     const d = document.createElement('div');
@@ -290,6 +432,7 @@ fetch('/sessions').then(r => r.json()).then(data => {
     if (data.browsers !== undefined) _globalBrowsers = data.browsers;
     if (data.maxBrowsers !== undefined) _maxBrowsers = data.maxBrowsers;
     updateGlobalStats();
+    updateEmptyState();
 });
 </script>
 </body>
