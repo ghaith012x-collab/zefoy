@@ -899,120 +899,58 @@ def run_tab(session, tab_id):
                                     time.sleep(3)
                                     continue
 
-                            # C: Find target username — paginate through ALL comment pages
-                            # Helper: check current page for user and return result
-                            def check_page_for_user():
-                                return page.evaluate("""(targetUser) => {
-                                    const forms = document.querySelectorAll('form.w1a');
-                                    for (let i = 0; i < forms.length; i++) {
-                                        const userEl = forms[i].querySelector('.kadi-rengi');
-                                        if (!userEl) continue;
-                                        const uname = userEl.innerText.trim().replace('@','').toLowerCase();
-                                        if (uname === targetUser) {
-                                            return {found: true, index: i, total: forms.length};
-                                        }
-                                    }
-                                    const nextBtn = document.querySelector('li[title="Next"] button');
-                                    const hasNext = nextBtn && !nextBtn.disabled;
-                                    // Get current page number
-                                    const activeLi = document.querySelector('.pagination li.active');
-                                    const curPage = activeLi ? parseInt(activeLi.getAttribute('title')) || 1 : 1;
-                                    return {found: false, total: forms.length, hasNext: hasNext, curPage: curPage};
-                                }""", target_user)
-
-                            # Helper: navigate to page N by clicking li[title="N"] or Next buttons
-                            def go_to_page(target_pg):
-                                # Try direct page button first
-                                direct = page.locator(f'.pagination li[title="{target_pg}"] button')
-                                if direct.count() > 0:
-                                    direct.click()
-                                    time.sleep(2)
-                                    return True
-                                # Otherwise click Next repeatedly (fast, 1s per click)
-                                for _ in range(target_pg):
-                                    nxt = page.locator('li[title="Next"] button')
-                                    if nxt.count() == 0:
-                                        return False
-                                    try:
-                                        if nxt.is_disabled():
-                                            return False
-                                    except:
-                                        pass
-                                    nxt.click()
-                                    time.sleep(1)
-                                return True
-
+                            # C: Search ALL pages for target username — no shortcuts
                             found_user = False
                             crashed = False
                             max_pages = 250  # up to ~10,000 comments
 
-                            # Strategy 1: If another tab already found the user on a page, jump there first
-                            cached_page = session.found_page
-                            if cached_page > 1:
+                            for pg in range(max_pages):
+                                if session.stop_event.is_set():
+                                    break
                                 try:
-                                    session.log(f"⚡ Jumping to page {cached_page} (cached)...")
-                                    go_to_page(cached_page)
-                                    result = check_page_for_user()
+                                    result = page.evaluate("""(targetUser) => {
+                                        const forms = document.querySelectorAll('form.w1a');
+                                        for (let i = 0; i < forms.length; i++) {
+                                            const userEl = forms[i].querySelector('.kadi-rengi');
+                                            if (!userEl) continue;
+                                            const uname = userEl.innerText.trim().replace('@','').toLowerCase();
+                                            if (uname === targetUser) {
+                                                return {found: true, index: i};
+                                            }
+                                        }
+                                        const nextBtn = document.querySelector('li[title="Next"] button');
+                                        const hasNext = nextBtn && !nextBtn.disabled;
+                                        return {found: false, total: forms.length, hasNext: hasNext};
+                                    }""", target_user)
+
                                     if result.get('found'):
                                         idx = result['index']
                                         form_loc = page.locator(f".{menu_cls} form.w1a").nth(idx)
                                         form_loc.locator("select[name='select_lmt']").select_option("100")
                                         time.sleep(1)
                                         form_loc.locator("button[type='submit']").click()
-                                        session.log(f"💬 Sent 100 hearts to @{target_user} (page {cached_page})")
+                                        session.log(f"💬 Sent 100 hearts to @{target_user} (page {pg + 1})")
                                         found_user = True
                                         time.sleep(3)
+                                        break
+
+                                    if result.get('hasNext'):
+                                        if pg == 0:
+                                            session.log(f"🔍 Page 1 — not found, searching all pages...")
+                                        page.locator('li[title="Next"] button').click()
+                                        time.sleep(1.5)
                                     else:
-                                        session.log(f"🔍 Not on cached page {cached_page}, fast-searching all...")
-                                        # Go back to page 1
-                                        p1 = page.locator('.pagination li[title="1"] button')
-                                        if p1.count() > 0:
-                                            p1.click()
-                                            time.sleep(1.5)
-                                except Exception as e:
-                                    err_s = str(e).lower()
+                                        total_scanned = (pg * 40) + result.get('total', 0)
+                                        session.log(f"❌ @{target_user} not found in {total_scanned} comments ({pg + 1} pages)")
+                                        break
+                                except Exception as ce:
+                                    err_s = str(ce).lower()
                                     if "crash" in err_s or "target closed" in err_s or "disposed" in err_s:
                                         crashed = True
-                                        session.log("💥 Crashed during page jump, restarting...")
-
-                            # Strategy 2: Fast sequential search through all pages (1.5s between pages)
-                            if not found_user and not crashed:
-                                for pg in range(max_pages):
-                                    if session.stop_event.is_set():
+                                        session.log("💥 Crashed during pagination, restarting...")
                                         break
-                                    try:
-                                        result = check_page_for_user()
-
-                                        if result.get('found'):
-                                            idx = result['index']
-                                            cur_pg = result.get('curPage', pg + 1)
-                                            form_loc = page.locator(f".{menu_cls} form.w1a").nth(idx)
-                                            form_loc.locator("select[name='select_lmt']").select_option("100")
-                                            time.sleep(1)
-                                            form_loc.locator("button[type='submit']").click()
-                                            session.found_page = cur_pg  # Share with other tabs
-                                            session.log(f"💬 Sent 100 hearts to @{target_user} (page {cur_pg})")
-                                            found_user = True
-                                            time.sleep(3)
-                                            break
-
-                                        if result.get('hasNext'):
-                                            if pg == 0:
-                                                session.log(f"🔍 @{target_user} not on page 1, fast-paginating...")
-                                            page.locator('li[title="Next"] button').click()
-                                            time.sleep(1.5)  # Fast pagination
-                                        else:
-                                            total_scanned = (pg * 40) + result.get('total', 0)
-                                            session.log(f"❌ @{target_user} not found in {total_scanned} comments ({pg + 1} pages)")
-                                            break
-                                    except Exception as ce:
-                                        err_s = str(ce).lower()
-                                        if "crash" in err_s or "target closed" in err_s or "disposed" in err_s:
-                                            crashed = True
-                                            session.log("💥 Crashed during pagination, restarting...")
-                                            break
-                                        session.log(f"⚠️ Pagination error: {ce}")
-                                        break
+                                    session.log(f"⚠️ Pagination error: {ce}")
+                                    break
 
                             if crashed:
                                 break
