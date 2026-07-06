@@ -9,8 +9,9 @@ import numpy as np
 # Thread-local tab prefix for log messages
 _tab_prefix = threading.local()
 
-# Global limit: max 3 Chromium browsers across ALL sessions at once
-MAX_GLOBAL_BROWSERS = 5
+# Global limit: max Chromium browsers across ALL sessions at once.
+# Override via MAX_BROWSERS env var (e.g. set to a lower value on small instances).
+MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "20"))
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
 _active_browsers_lock = threading.Lock()
@@ -416,7 +417,7 @@ class Session:
         self.service = service  # key into SERVICES dict
         self.username = username  # Target username for comment_hearts
 
-        self.num_tabs = max(1, min(num_tabs, 5))  # clamp 1-5
+        self.num_tabs = max(1, min(num_tabs, 20))  # clamp 1-20
         self.status = "starting"
         self.total_count = 0
         self.cycles = 0
@@ -550,7 +551,7 @@ def run_tab(session, tab_id):
             got_slot = False
             try:
                 if not _browser_semaphore.acquire(timeout=1):
-                    session.log("⏳ Waiting for browser slot (max 5 globally)...")
+                    session.log(f"⏳ Waiting for browser slot (max {MAX_GLOBAL_BROWSERS} globally)...")
                     _browser_semaphore.acquire()  # block until available
                 got_slot = True
                 with _active_browsers_lock:
@@ -1340,13 +1341,14 @@ def stream_all():
 
 @app.route("/remove/<int:sid>", methods=["POST"])
 def remove_session(sid):
-    """Remove a stopped/error session from the list."""
+    """Delete a session. If it's still running, signal its tabs to stop first;
+    the daemon threads wind down and release their browser slots on their own."""
     with sessions_lock:
         session = sessions.get(sid)
         if not session:
             return jsonify({"error": "Not found"}), 404
-        if session.status not in ("stopped", "error"):
-            return jsonify({"error": "Can only remove stopped sessions"}), 400
+        session.stop_event.set()
+        session.status = "stopping"
         del sessions[sid]
     return jsonify({"ok": True})
 
