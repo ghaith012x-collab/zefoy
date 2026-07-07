@@ -15,6 +15,8 @@ def _is_dead(e):
             "connection closed" in s or "browser disconnected" in s or
             "frame was detached" in s or "err_aborted" in s or
             "net::err" in s or "page crash" in s or
+            "eagain" in s or "resource temporarily unavailable" in s or
+            "failed to launch" in s or "spawn" in s or
             "targetclosed" in t)
 
 # Thread-local tab prefix for log messages
@@ -22,7 +24,7 @@ _tab_prefix = threading.local()
 
 # Global limit: max Chromium browsers across ALL sessions at once.
 # Override via MAX_BROWSERS env var (e.g. set to a lower value on small instances).
-MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "20"))
+MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "15"))
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
 _active_browsers_lock = threading.Lock()
