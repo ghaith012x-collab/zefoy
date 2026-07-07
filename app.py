@@ -22,7 +22,7 @@ _tab_prefix = threading.local()
 
 # Global limit: max Chromium browsers across ALL sessions at once.
 # Override via MAX_BROWSERS env var (e.g. set to a lower value on small instances).
-MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "6"))
+MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "20"))
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
 _active_browsers_lock = threading.Lock()
@@ -784,7 +784,7 @@ def run_tab(session, tab_id):
                             session.log(f"\u274c {svc_name} button not found. Restarting...")
                         continue
 
-                    page.locator(f".{btn_cls}").click()
+                    page.locator(f".{btn_cls}").click(force=True, timeout=10000)
                     time.sleep(2)
                     session.log(f"\u2705 {svc_name} panel opened!")
 
