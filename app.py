@@ -1141,33 +1141,72 @@ def run_tab(session, tab_id):
 
                             # ── Send button visible (the bar with send/arrow) → click it ──
                             try:
-                                bar_info = page.evaluate(f"""() => {{
-                                    const menu = document.querySelector('.{menu_cls}');
-                                    if (!menu) return null;
-                                    const forms = menu.querySelectorAll('form');
-                                    for (const form of forms) {{
-                                        const action = form.getAttribute('action');
-                                        if (action) {{
-                                            const container = document.getElementById(action);
-                                            if (container && container.offsetParent !== null) {{
-                                                const btn = container.querySelector('a, button, [onclick]');
-                                                if (btn && btn.offsetParent !== null) {{
-                                                    const r = btn.getBoundingClientRect();
-                                                    if (r.width > 0 && r.height > 0) {{
-                                                        return {{x: r.x + r.width/2, y: r.y + r.height/2}};
+                                if session.service == "favorites":
+                                    # Favorites: ad iframes often sit on top of the send bar,
+                                    # so strip all overlays first then JS-click the button.
+                                    clicked = page.evaluate(f"""() => {{
+                                        document.querySelectorAll('iframe').forEach(el => el.remove());
+                                        document.querySelectorAll('.fc-dialog-overlay, .fc-monetization-dialog-container, .fc-message-root, .fc-consent-root').forEach(el => el.remove());
+                                        document.querySelectorAll('[class*="fullscreen"]').forEach(el => {{
+                                            if (el.querySelector('iframe')) el.remove();
+                                        }});
+                                        const menu = document.querySelector('.{menu_cls}');
+                                        if (!menu) return false;
+                                        const forms = menu.querySelectorAll('form');
+                                        for (const form of forms) {{
+                                            const action = form.getAttribute('action');
+                                            if (action) {{
+                                                const container = document.getElementById(action);
+                                                if (container && container.offsetParent !== null) {{
+                                                    const btn = container.querySelector('a, button, [onclick]');
+                                                    if (btn) {{
+                                                        btn.dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true}}));
+                                                        return true;
                                                     }}
                                                 }}
                                             }}
                                         }}
-                                    }}
-                                    return null;
-                                }}""")
-                                if bar_info:
-                                    x, y = bar_info['x'], bar_info['y']
-                                    session.log(f"{emoji} Clicking send button ({x:.0f},{y:.0f})...")
-                                    page.mouse.click(x, y)
-                                    time.sleep(3)
-                                    continue
+                                        const fallbacks = menu.querySelectorAll('button[type="submit"], .btn-primary, a.wbutton');
+                                        for (const fb of fallbacks) {{
+                                            if (fb.offsetParent !== null) {{
+                                                fb.dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true}}));
+                                                return true;
+                                            }}
+                                        }}
+                                        return false;
+                                    }}""")
+                                    if clicked:
+                                        session.log(f"{emoji} Clicking send button (JS)...")
+                                        time.sleep(3)
+                                        continue
+                                else:
+                                    bar_info = page.evaluate(f"""() => {{
+                                        const menu = document.querySelector('.{menu_cls}');
+                                        if (!menu) return null;
+                                        const forms = menu.querySelectorAll('form');
+                                        for (const form of forms) {{
+                                            const action = form.getAttribute('action');
+                                            if (action) {{
+                                                const container = document.getElementById(action);
+                                                if (container && container.offsetParent !== null) {{
+                                                    const btn = container.querySelector('a, button, [onclick]');
+                                                    if (btn && btn.offsetParent !== null) {{
+                                                        const r = btn.getBoundingClientRect();
+                                                        if (r.width > 0 && r.height > 0) {{
+                                                            return {{x: r.x + r.width/2, y: r.y + r.height/2}};
+                                                        }}
+                                                    }}
+                                                }}
+                                            }}
+                                        }}
+                                        return null;
+                                    }}""")
+                                    if bar_info:
+                                        x, y = bar_info['x'], bar_info['y']
+                                        session.log(f"{emoji} Clicking send button ({x:.0f},{y:.0f})...")
+                                        page.mouse.click(x, y)
+                                        time.sleep(3)
+                                        continue
                             except:
                                 pass
 
