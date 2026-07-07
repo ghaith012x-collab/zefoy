@@ -22,9 +22,13 @@ def _is_dead(e):
 # Thread-local tab prefix for log messages
 _tab_prefix = threading.local()
 
+# Limit concurrent OCR calls — each solve spawns ~80 tesseract processes,
+# so cap at 3 simultaneous solves to avoid exhausting the OS thread pool.
+_ocr_semaphore = threading.Semaphore(3)
+
 # Global limit: max Chromium browsers across ALL sessions at once.
 # Override via MAX_BROWSERS env var (e.g. set to a lower value on small instances).
-MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "15"))
+MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "12"))
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
 _active_browsers_lock = threading.Lock()
@@ -207,6 +211,10 @@ def remove_small_components(binary_arr, min_size=30):
 
 
 def solve_captcha(img_bytes):
+    with _ocr_semaphore:
+        return _solve_captcha_inner(img_bytes)
+
+def _solve_captcha_inner(img_bytes):
     import pytesseract
     from PIL import ImageFilter, ImageEnhance
     img = Image.open(BytesIO(img_bytes))
