@@ -1142,41 +1142,45 @@ def run_tab(session, tab_id):
                             # ── Send button visible (the bar with send/arrow) → click it ──
                             try:
                                 if session.service == "favorites":
-                                    # Favorites: ad iframes often sit on top of the send bar,
-                                    # so strip all overlays first then JS-click the button.
+                                    # After countdown + Search, zefoy shows a btn-dark
+                                    # (dark button with star icon + number) as the send button.
+                                    # Strip overlays first so nothing blocks the click.
                                     clicked = page.evaluate(f"""() => {{
                                         document.querySelectorAll('iframe').forEach(el => el.remove());
                                         document.querySelectorAll('.fc-dialog-overlay, .fc-monetization-dialog-container, .fc-message-root, .fc-consent-root').forEach(el => el.remove());
-                                        document.querySelectorAll('[class*="fullscreen"]').forEach(el => {{
-                                            if (el.querySelector('iframe')) el.remove();
-                                        }});
                                         const menu = document.querySelector('.{menu_cls}');
                                         if (!menu) return false;
-                                        const forms = menu.querySelectorAll('form');
-                                        for (const form of forms) {{
-                                            const action = form.getAttribute('action');
-                                            if (action) {{
-                                                const container = document.getElementById(action);
-                                                if (container && container.offsetParent !== null) {{
-                                                    const btn = container.querySelector('a, button, [onclick]');
-                                                    if (btn) {{
-                                                        btn.dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true}}));
-                                                        return true;
-                                                    }}
-                                                }}
+                                        // Primary: dark send button (btn-dark) — the star+number button
+                                        const darkBtns = menu.querySelectorAll('button.btn-dark');
+                                        for (const btn of darkBtns) {{
+                                            if (btn.offsetParent !== null) {{
+                                                btn.click();
+                                                return true;
                                             }}
                                         }}
-                                        const fallbacks = menu.querySelectorAll('button[type="submit"], .btn-primary, a.wbutton');
-                                        for (const fb of fallbacks) {{
-                                            if (fb.offsetParent !== null) {{
-                                                fb.dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true}}));
+                                        // Secondary: success button
+                                        const successBtns = menu.querySelectorAll('button.btn-success');
+                                        for (const btn of successBtns) {{
+                                            if (btn.offsetParent !== null) {{
+                                                btn.click();
                                                 return true;
                                             }}
                                         }}
                                         return false;
                                     }}""")
                                     if clicked:
-                                        session.log(f"{emoji} Clicking send button (JS)...")
+                                        session.log(f"{emoji} Clicking send button (btn-dark)...")
+                                        time.sleep(3)
+                                        continue
+                                    else:
+                                        # No send button found and no status text matched —
+                                        # this is almost always "too many requests" rendering
+                                        # without the literal text. Click Search again.
+                                        session.log("⚠️ No send button yet — likely rate-limited, clicking Search again...")
+                                        try:
+                                            page.locator(submit_sel).first.click()
+                                        except:
+                                            pass
                                         time.sleep(3)
                                         continue
                                 else:
