@@ -142,6 +142,99 @@ def remove_overlays(page):
     except:
         pass
 
+
+# ═══════════════════════════════════════════════════════════════
+#  ANTI-DETECTION SCRIPTS (from reference)
+# ═══════════════════════════════════════════════════════════════
+
+DISMISS_ALERTS_JS = "window.alert = function() { return true; }; window.confirm = function() { return true; };"
+
+BLOCK_FC_POPUPS_JS = """(() => {
+    const cleanPage = () => {
+        document.querySelectorAll('iframe').forEach(el => el.remove());
+        document.querySelectorAll('.fc-monetization-dialog-container, .fc-message-root, .fc-dialog-overlay, .fc-consent-root').forEach(el => el.remove());
+        document.querySelectorAll('.adsbygoogle').forEach(el => el.remove());
+        document.querySelectorAll('button').forEach(btn => {
+            if (btn.textContent.includes('Consent') && btn.offsetParent !== null) btn.click();
+        });
+    };
+    setTimeout(cleanPage, 800);
+    const observer = new MutationObserver(cleanPage);
+    if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+    else document.addEventListener('DOMContentLoaded', () => observer.observe(document.body, { childList: true, subtree: true }));
+})();"""
+
+MOUSE_SIMULATION_K9X_JS = """(() => {
+    function generateK9xMouseData() {
+        const points = [];
+        const numPoints = Math.floor(Math.random() * 16) + 12;
+        for (let i = 0; i < numPoints; i++) {
+            const x = Math.floor(Math.random() * 1850) + 50;
+            const y = Math.floor(Math.random() * 950) + 50;
+            const d = (Math.random() * 2.75 + 0.05).toFixed(4);
+            const g = Math.random() > 0.65 ? "True" : "False";
+            points.push(`x=${x}&y=${y}&d=${d}&g=${g}`);
+        }
+        const raw = points.join("|");
+        let xored = "";
+        for (let i = 0; i < raw.length; i++) {
+            xored += String.fromCharCode(raw.charCodeAt(i) ^ ((i % 5) + 77));
+        }
+        const wrapped = "K9x!" + xored + "K9x!";
+        const encoded = btoa(wrapped);
+        let reversed = encoded.split("").reverse().join("");
+        while (reversed.length % 4 !== 0) reversed += "=";
+        return reversed;
+    }
+    function injectMouseData() {
+        const mouseData = generateK9xMouseData();
+        document.querySelectorAll('input[type="hidden"]').forEach(input => {
+            if (!input.value && input.name !== 'captcha_encoded') input.value = mouseData;
+        });
+        window.__zefoyMouseData = mouseData;
+    }
+    setTimeout(injectMouseData, 500);
+    setTimeout(injectMouseData, 1500);
+    setTimeout(injectMouseData, 3000);
+    document.addEventListener('submit', function(e) { injectMouseData(); }, true);
+    document.addEventListener('click', function(e) {
+        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) setTimeout(injectMouseData, 50);
+    }, true);
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(m) { if (m.addedNodes.length > 0) setTimeout(injectMouseData, 100); });
+    });
+    if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+    else document.addEventListener('DOMContentLoaded', function() {
+        observer.observe(document.body, { childList: true, subtree: true }); injectMouseData();
+    });
+    window.generateK9xMouseData = generateK9xMouseData;
+    window.injectMouseData = injectMouseData;
+})();"""
+
+GENERATE_CF_OB_TE_JS = """(() => {
+    function generateCfObTeCookie() {
+        const source = "HTMLButtonElement.onclick@https://zefoy.com/:1:1";
+        const kod = "DOMContentLoaded";
+        const payload = `Kod: ${kod}\nsource: ${source}`;
+        const cookieValue = btoa(payload);
+        const expiry = new Date(Date.now() + 5 * 60 * 60 * 1000).toUTCString();
+        document.cookie = `cf_ob_te=${cookieValue}; Path=/; Expires=${expiry}`;
+        return cookieValue;
+    }
+    generateCfObTeCookie();
+    setInterval(generateCfObTeCookie, 60000);
+    window.generateCfObTeCookie = generateCfObTeCookie;
+})();"""
+
+
+def inject_anti_detection(page):
+    """Inject all anti-detection scripts into the page."""
+    try:
+        for script in [DISMISS_ALERTS_JS, BLOCK_FC_POPUPS_JS, MOUSE_SIMULATION_K9X_JS, GENERATE_CF_OB_TE_JS]:
+            page.evaluate(script)
+    except:
+        pass
+
 # ═══════════════════════════════════════════════════════════════
 #  SERVICES
 # ═══════════════════════════════════════════════════════════════
@@ -151,7 +244,6 @@ SERVICES = {
         "name": "Hearts",
         "emoji": "❤️",
         "button_class": "t-hearts-button",
-        "menu_class": "t-hearts-menu",
         "unit": "hearts",
         "engine": "zefoy",
     },
@@ -159,7 +251,6 @@ SERVICES = {
         "name": "Views",
         "emoji": "👁️",
         "button_class": "t-views-button",
-        "menu_class": "t-views-menu",
         "unit": "views",
         "engine": "zefoy",
     },
@@ -167,7 +258,6 @@ SERVICES = {
         "name": "Comment Hearts",
         "emoji": "💬",
         "button_class": "t-chearts-button",
-        "menu_class": "t-chearts-menu",
         "unit": "hearts",
         "engine": "zefoy",
     },
@@ -175,7 +265,6 @@ SERVICES = {
         "name": "Shares",
         "emoji": "🔄",
         "button_class": "t-shares-button",
-        "menu_class": "t-shares-menu",
         "unit": "shares",
         "engine": "zefoy",
     },
@@ -183,7 +272,6 @@ SERVICES = {
         "name": "Favorites",
         "emoji": "⭐",
         "button_class": "t-favorites-button",
-        "menu_class": "t-favorites-menu",
         "unit": "favorites",
         "engine": "zefoy",
     },
@@ -191,7 +279,6 @@ SERVICES = {
         "name": "Followers",
         "emoji": "👥",
         "button_class": "t-followers-button",
-        "menu_class": "t-followers-menu",
         "unit": "followers",
         "engine": "zefoy",
     },
@@ -591,7 +678,6 @@ def run_tab(session, tab_id):
     svc = session.svc
     svc_name = svc["name"]
     btn_cls = svc["button_class"]
-    menu_cls = svc["menu_class"]
     unit = svc["unit"]
     emoji = svc["emoji"]
     multi = session.num_tabs > 1
@@ -709,6 +795,9 @@ def run_tab(session, tab_id):
                         session.log(f"\U0001f4a5 Page crashed on load ({_goto_err}), restarting...")
                         continue
                     time.sleep(5)
+
+                    # Inject anti-detection scripts (mouse simulation, cookie, overlay cleanup)
+                    inject_anti_detection(page)
 
                     if not _safe_check(page):
                         session.log("\U0001f4a5 Page crashed on load, restarting...")
@@ -832,6 +921,7 @@ def run_tab(session, tab_id):
                                         try:
                                             page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=8000)
                                             session.log("\u2705 Captcha solved!")
+                                            inject_anti_detection(page)
                                             captcha_solved = True
                                             break
                                         except:
@@ -899,6 +989,7 @@ def run_tab(session, tab_id):
                         continue
 
                     time.sleep(2)
+                    inject_anti_detection(page)
                     session.log(f"\u2705 {svc_name} panel opened!")
 
                     backoff = 5
@@ -916,14 +1007,7 @@ def run_tab(session, tab_id):
                         session.log(f"🔄 Cycle {cycle}")
 
                         try:
-                            input_sel = (
-                                f".{menu_cls} input[type='text'],"
-                                f".{menu_cls} input[type='url'],"
-                                f".{menu_cls} input[type='search'],"
-                                f".{menu_cls} input[placeholder],"
-                                f".{menu_cls} input:not([type='hidden']):not([type='submit'])"
-                                f":not([type='checkbox']):not([type='radio'])"
-                            )
+                            input_sel = 'input[placeholder="Enter Video URL"]:visible, input[type="search"]:visible'
                             url_input = page.locator(input_sel).first
 
                             try:
@@ -935,7 +1019,9 @@ def run_tab(session, tab_id):
                                 try:
                                     remove_overlays(page)
                                     time.sleep(0.3)
-                                    page.locator(f".{btn_cls}").click()
+                                    remove_overlays(page)
+                                    time.sleep(0.3)
+                                    page.locator(f".{btn_cls}").first.click(force=True)
                                     time.sleep(2)
                                     url_input.wait_for(state="visible", timeout=10000)
                                     input_fail_count = 0
@@ -972,11 +1058,7 @@ def run_tab(session, tab_id):
                                 session.log(f"✅ URL filled")
 
                             # Click Search (with overlay removal)
-                            submit_sel = (
-                                f".{menu_cls} button[type='submit'],"
-                                f".{menu_cls} input[type='submit'],"
-                                f".{menu_cls} .btn-primary"
-                            )
+                            submit_sel = 'button:has-text("Search"):visible'
                             remove_overlays(page)
                             time.sleep(0.3)
                             page.locator(submit_sel).first.click()
@@ -1039,11 +1121,11 @@ def run_tab(session, tab_id):
                                 continue
 
                             # B: Wait for 💬 count button and click it
-                            if page.locator(f".{menu_cls} .kadi-rengi").count() > 0:
+                            if page.locator(".kadi-rengi").count() > 0:
                                 session.log("💬 Comments already visible")
                             else:
                                 try:
-                                    count_btn = page.locator(f".{menu_cls} button.wbutton").first
+                                    count_btn = page.locator("button.wbutton:visible").first
                                     count_btn.wait_for(state="visible", timeout=20000)
                                     remove_overlays(page)
                                     time.sleep(0.3)
@@ -1052,7 +1134,7 @@ def run_tab(session, tab_id):
                                     session.log("💬 Comments loaded")
                                 except:
                                     try:
-                                        snippet = page.inner_text(f".{menu_cls}")[:150]
+                                        snippet = page.inner_text("body")[:150]
                                         session.log(f"⚠️ 💬 button not found. Panel: {snippet}")
                                     except:
                                         session.log("⚠️ 💬 button not found, panel unreadable")
@@ -1093,7 +1175,7 @@ def run_tab(session, tab_id):
 
                                     if result.get('found'):
                                         idx = result['index']
-                                        form_loc = page.locator(f".{menu_cls} form.w1a").nth(idx)
+                                        form_loc = page.locator("form.w1a").nth(idx)
                                         form_loc.locator("select[name='select_lmt']").select_option("100")
                                         time.sleep(1)
                                         remove_overlays(page)
@@ -1180,11 +1262,7 @@ def run_tab(session, tab_id):
                                 session.log("⚠️ Too many requests — clicking Search again...")
                                 time.sleep(2)
                                 try:
-                                    submit_sel = (
-                                        f".{menu_cls} button[type='submit'],"
-                                        f".{menu_cls} input[type='submit'],"
-                                        f".{menu_cls} .btn-primary"
-                                    )
+                                    submit_sel = 'button:has-text("Search"):visible'
                                     remove_overlays(page)
                                     time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
@@ -1214,11 +1292,7 @@ def run_tab(session, tab_id):
                                 # Click Search 2 times after countdown
                                 session.log("✅ Countdown done — clicking Search 2x...")
                                 try:
-                                    submit_sel = (
-                                        f".{menu_cls} button[type='submit'],"
-                                        f".{menu_cls} input[type='submit'],"
-                                        f".{menu_cls} .btn-primary"
-                                    )
+                                    submit_sel = 'button:has-text("Search"):visible'
                                     remove_overlays(page)
                                     time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
@@ -1233,11 +1307,7 @@ def run_tab(session, tab_id):
                             if "ready" in lower_body and "next submit" in lower_body:
                                 session.log("✅ Ready — clicking Search...")
                                 try:
-                                    submit_sel = (
-                                        f".{menu_cls} button[type='submit'],"
-                                        f".{menu_cls} input[type='submit'],"
-                                        f".{menu_cls} .btn-primary"
-                                    )
+                                    submit_sel = 'button:has-text("Search"):visible'
                                     remove_overlays(page)
                                     time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
@@ -1266,82 +1336,47 @@ def run_tab(session, tab_id):
                                     session.log(f"✅ Success (count not captured). Total: {new_total:,}")
                                 break
 
-                            # ── Send button visible (the bar with send/arrow) → click it ──
+                            # ── Send button visible → click it (btn-dark / wbutton / btn-success) ──
+                            send_clicked = False
                             try:
-                                if session.service == "favorites":
-                                    # After countdown + Search, zefoy shows a btn-dark
-                                    # (dark button with star icon + number) as the send button.
-                                    # Strip overlays first so nothing blocks the click.
-                                    clicked = page.evaluate(f"""() => {{
-                                        document.querySelectorAll('iframe').forEach(el => el.remove());
-                                        document.querySelectorAll('.fc-dialog-overlay, .fc-monetization-dialog-container, .fc-message-root, .fc-consent-root').forEach(el => el.remove());
-                                        const menu = document.querySelector('.{menu_cls}');
-                                        if (!menu) return false;
-                                        // Primary: dark send button (btn-dark) — the star+number button
-                                        const darkBtns = menu.querySelectorAll('button.btn-dark');
-                                        for (const btn of darkBtns) {{
-                                            if (btn.offsetParent !== null) {{
-                                                btn.click();
-                                                return true;
-                                            }}
-                                        }}
-                                        // Secondary: success button
-                                        const successBtns = menu.querySelectorAll('button.btn-success');
-                                        for (const btn of successBtns) {{
-                                            if (btn.offsetParent !== null) {{
-                                                btn.click();
-                                                return true;
-                                            }}
-                                        }}
+                                remove_overlays(page)
+                                time.sleep(0.3)
+                                for send_sel in ['button.btn-dark:visible', 'button.wbutton:visible', 'button.btn-success:visible']:
+                                    try:
+                                        send_btn = page.locator(send_sel).first
+                                        if send_btn.is_visible(timeout=2000):
+                                            send_btn.click()
+                                            send_clicked = True
+                                            session.log(f"{emoji} Clicked send button!")
+                                            time.sleep(3)
+                                            break
+                                    except:
+                                        continue
+                                if not send_clicked:
+                                    # JS fallback: click any visible btn-dark or wbutton
+                                    send_clicked = page.evaluate("""() => {
+                                        const btns = document.querySelectorAll('button');
+                                        for (const b of btns) {
+                                            const cls = b.className || '';
+                                            const rect = b.getBoundingClientRect();
+                                            if (cls.includes('btn-dark') && rect.width > 0 && rect.height > 0) {
+                                                b.click(); return true;
+                                            }
+                                        }
+                                        for (const b of btns) {
+                                            const cls = b.className || '';
+                                            const rect = b.getBoundingClientRect();
+                                            if (cls.includes('wbutton') && rect.width > 0 && rect.height > 0) {
+                                                b.click(); return true;
+                                            }
+                                        }
                                         return false;
-                                    }}""")
-                                    if clicked:
-                                        session.log(f"{emoji} Clicking send button (btn-dark)...")
+                                    }""")
+                                    if send_clicked:
+                                        session.log(f"{emoji} Clicked send button (JS fallback)!")
                                         time.sleep(3)
-                                        continue
-                                    else:
-                                        # No send button found and no status text matched —
-                                        # this is almost always "too many requests" rendering
-                                        # without the literal text. Click Search again.
-                                        session.log("⚠️ No send button yet — likely rate-limited, clicking Search again...")
-                                        try:
-                                            remove_overlays(page)
-                                            time.sleep(0.3)
-                                            page.locator(submit_sel).first.click()
-                                        except:
-                                            pass
-                                        time.sleep(3)
-                                        continue
-                                else:
-                                    bar_info = page.evaluate(f"""() => {{
-                                        const menu = document.querySelector('.{menu_cls}');
-                                        if (!menu) return null;
-                                        const forms = menu.querySelectorAll('form');
-                                        for (const form of forms) {{
-                                            const action = form.getAttribute('action');
-                                            if (action) {{
-                                                const container = document.getElementById(action);
-                                                if (container && container.offsetParent !== null) {{
-                                                    const btn = container.querySelector('a, button, [onclick]');
-                                                    if (btn && btn.offsetParent !== null) {{
-                                                        const r = btn.getBoundingClientRect();
-                                                        if (r.width > 0 && r.height > 0) {{
-                                                            return {{x: r.x + r.width/2, y: r.y + r.height/2}};
-                                                        }}
-                                                    }}
-                                                }}
-                                            }}
-                                        }}
-                                        return null;
-                                    }}""")
-                                    if bar_info:
-                                        x, y = bar_info['x'], bar_info['y']
-                                        session.log(f"{emoji} Clicking send button ({x:.0f},{y:.0f})...")
-                                        remove_overlays(page)
-                                        time.sleep(0.3)
-                                        page.mouse.click(x, y)
-                                        time.sleep(3)
-                                        continue
+                                if send_clicked:
+                                    continue
                             except:
                                 pass
 
