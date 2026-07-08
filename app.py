@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify, Response
 from playwright.sync_api import sync_playwright
-import threading, time, re, sys, difflib, json, base64, os
+import threading, time, re, sys, difflib, json, base64, os, resource
 from PIL import Image, ImageOps
 from io import BytesIO
 from collections import Counter, deque
@@ -22,9 +22,18 @@ def _is_dead(e):
 # Thread-local tab prefix for log messages
 _tab_prefix = threading.local()
 
-# Limit concurrent OCR calls — each solve spawns ~80 tesseract processes,
-# so cap at 3 simultaneous solves to avoid exhausting the OS thread pool.
-_ocr_semaphore = threading.Semaphore(3)
+# ═══════════════════════════════════════════════════════════════
+#  CONCURRENCY LIMITS
+# ═══════════════════════════════════════════════════════════════
+
+# Captcha solving semaphore — each solve spawns ~80 tesseract processes,
+# so cap at CAPTCHA_CONCURRENCY simultaneous solves to avoid OS fork bomb.
+# Override via CAPTCHA_CONCURRENCY env var.
+CAPTCHA_CONCURRENCY = int(os.environ.get("CAPTCHA_CONCURRENCY", "3"))
+_captcha_semaphore = threading.Semaphore(CAPTCHA_CONCURRENCY)
+
+# Reuse captcha concurrency for OCR calls
+_ocr_semaphore = threading.Semaphore(CAPTCHA_CONCURRENCY)
 
 # Global limit: max Chromium browsers across ALL sessions at once.
 # Override via MAX_BROWSERS env var (e.g. set to a lower value on small instances).
@@ -32,6 +41,21 @@ MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_BROWSERS", "12"))
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
 _active_browsers_lock = threading.Lock()
+
+# Attempt to raise OS process/file limits (best-effort, ignored if not permitted)
+try:
+    soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
+    resource.setrlimit(resource.RLIMIT_NPROC, (hard, hard))
+    print(f"[SYS] Raised RLIMIT_NPROC to {hard}", flush=True)
+except:
+    pass
+
+try:
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+    print(f"[SYS] Raised RLIMIT_NOFILE to {hard}", flush=True)
+except:
+    pass
 
 app = Flask(__name__)
 ZEFOY = "https://zefoy.com"
@@ -97,6 +121,26 @@ def renew_tor_circuit():
     except Exception as e:
         print(f"[TOR] Circuit renewal error: {e}", flush=True)
         return False
+
+# ═══════════════════════════════════════════════════════════════
+#  OVERLAY REMOVAL HELPER
+# ═══════════════════════════════════════════════════════════════
+
+def remove_overlays(page):
+    """Strip ad iframes and consent dialogs that can intercept clicks."""
+    try:
+        page.evaluate("""() => {
+            // Remove all iframes (ads, consent dialogs)
+            document.querySelectorAll('iframe').forEach(el => el.remove());
+            // Remove Funding Choices and Google consent popups
+            document.querySelectorAll('.fc-dialog-overlay, .fc-monetization-dialog-container, .fc-message-root, .fc-consent-root').forEach(el => el.remove());
+            // Remove any floating overlays
+            document.querySelectorAll('[style*="position: fixed"], [style*="position: absolute"]').forEach(el => {
+                if (el.style.zIndex && parseInt(el.style.zIndex) > 9000) el.remove();
+            });
+        }""")
+    except:
+        pass
 
 # ═══════════════════════════════════════════════════════════════
 #  SERVICES
@@ -229,17 +273,33 @@ def _solve_captcha_inner(img_bytes):
     results = []
 
     def run_ocr(pil_img, tag=""):
-        """Run tesseract with multiple PSM modes and collect results."""
+        """Run tesseract with multiple PSM modes and collect results.
+        Retries on EAGAIN (resource temporarily unavailable) with backoff."""
         found = []
         for psm in [7, 8, 13, 6]:
             config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyz'
-            try:
-                text = pytesseract.image_to_string(pil_img, config=config).strip()
-                text = re.sub(r'[^a-z]', '', text.lower())
-                if 3 <= len(text) <= 12:
-                    found.append(text)
-            except Exception as ocr_err:
-                print(f"[BOT] OCR {tag} psm={psm} error: {ocr_err}", flush=True)
+            # Retry up to 4 times on EAGAIN
+            for attempt in range(4):
+                try:
+                    text = pytesseract.image_to_string(pil_img, config=config).strip()
+                    text = re.sub(r'[^a-z]', '', text.lower())
+                    if 3 <= len(text) <= 12:
+                        found.append(text)
+                    break  # Success, move to next PSM
+                except Exception as ocr_err:
+                    err_str = str(ocr_err).lower()
+                    # EAGAIN = transient fork failure, retry with backoff
+                    if "eagain" in err_str or "resource temporarily unavailable" in err_str or "errno 11" in err_str:
+                        if attempt < 3:
+                            backoff = 0.3 * (attempt + 1)  # 0.3s, 0.6s, 0.9s, 1.2s
+                            print(f"[BOT] OCR {tag} psm={psm} EAGAIN, retrying in {backoff}s (attempt {attempt+1}/4)...", flush=True)
+                            time.sleep(backoff)
+                            continue
+                        else:
+                            print(f"[BOT] OCR {tag} psm={psm} EAGAIN exhausted after 4 attempts", flush=True)
+                    else:
+                        print(f"[BOT] OCR {tag} psm={psm} error: {ocr_err}", flush=True)
+                    break  # Fatal error or exhausted retries
         return found
 
     # Strategy 1: Direct thresholds (dark text on light bg)
@@ -424,7 +484,7 @@ def resolve_comment_link(url):
 
 # ═══════════════════════════════════════════════════════════════
 #  SESSION MANAGEMENT
-# ═══════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════��══════════════
 
 class Session:
     _counter = 0
@@ -641,7 +701,7 @@ def run_tab(session, tab_id):
                         except:
                             return False
 
-                    # \u2500\u2500 Load zefoy \u2500\u2500
+                    # ── Load zefoy ──
                     session.log("\U0001f310 Loading zefoy.com...")
                     try:
                         page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
@@ -654,7 +714,7 @@ def run_tab(session, tab_id):
                         session.log("\U0001f4a5 Page crashed on load, restarting...")
                         continue
 
-                    # \u2500\u2500 Check page / Solve captcha \u2500\u2500
+                    # ── Check page / Solve captcha ──
                     session.log("\U0001f510 Checking for captcha...")
 
                     captcha_detected = False
@@ -716,70 +776,93 @@ def run_tab(session, tab_id):
                         continue
 
                     if captcha_detected:
-                        session.log("\U0001f510 Captcha detected, solving...")
-                        captcha_solved = False
-                        for captcha_attempt in range(20):
-                            if session.stop_event.is_set():
-                                return
-
-                            if not _safe_check(page):
-                                session.log("\U0001f4a5 Crashed during captcha, restarting...")
-                                break
-
+                        session.log(f"⏳ Waiting for a captcha-solving slot (max {CAPTCHA_CONCURRENCY} concurrent)...")
+                        try:
+                            _captcha_semaphore.acquire()
+                            session.log("\U0001f510 Acquired captcha-solving slot, starting...")
                             try:
-                                captcha_img = page.locator("#captcha-img, img[src*='CAPTCHA'], img[src*='captcha']")
-                                try:
-                                    captcha_img.first.wait_for(state="visible", timeout=10000)
-                                except:
-                                    session.log("\u26a0\ufe0f Captcha image not loading, reloading page...")
-                                    page.reload(wait_until="domcontentloaded")
-                                    time.sleep(5)
+                                captcha_solved = False
+                                for captcha_attempt in range(20):
+                                    if session.stop_event.is_set():
+                                        return
+
+                                    if not _safe_check(page):
+                                        session.log("\U0001f4a5 Crashed during captcha, restarting...")
+                                        break
+
+                                    try:
+                                        captcha_img = page.locator("#captcha-img, img[src*='CAPTCHA'], img[src*='captcha']")
+                                        try:
+                                            captcha_img.first.wait_for(state="visible", timeout=10000)
+                                        except:
+                                            session.log("\u26a0\ufe0f Captcha image not loading, reloading page...")
+                                            page.reload(wait_until="domcontentloaded")
+                                            time.sleep(5)
+                                            continue
+
+                                        session.log(f"\U0001f510 Solving captcha (attempt {captcha_attempt + 1})...")
+                                        time.sleep(2)
+                                        captcha_bytes = captcha_img.first.screenshot()
+                                        answer = solve_captcha(captcha_bytes)
+
+                                        if not answer:
+                                            session.log("\u26a0\ufe0f OCR failed, refreshing captcha...")
+                                            try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
+                                            except: page.reload(wait_until="domcontentloaded")
+                                            time.sleep(3)
+                                            continue
+
+                                        session.log(f"\U0001f524 Answer: '{answer}'")
+                                        
+                                        # Remove overlays before clicking input
+                                        remove_overlays(page)
+                                        time.sleep(0.5)
+                                        
+                                        captcha_input = page.locator("#captchatoken, input[name='captcha_secure'], input[placeholder*='aptcha' i]")
+                                        captcha_input.first.fill(answer)
+                                        time.sleep(0.5)
+                                        
+                                        # Remove overlays before clicking submit
+                                        remove_overlays(page)
+                                        time.sleep(0.3)
+                                        
+                                        page.locator("button.submit-captcha, form .btn-primary[type='submit']").first.click()
+                                        time.sleep(5)
+
+                                        try:
+                                            page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=8000)
+                                            session.log("\u2705 Captcha solved!")
+                                            captcha_solved = True
+                                            break
+                                        except:
+                                            session.log(f"\u274c Wrong answer '{answer}', retrying...")
+                                            try: 
+                                                # Tightened selector for dismiss button
+                                                page.locator(".swal2-popup .swal2-confirm, .swal2-confirm, .modal.show .btn-secondary, .modal.show .close").first.click()
+                                            except: pass
+                                            time.sleep(1)
+                                            try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
+                                            except: pass
+                                            time.sleep(3)
+                                    except Exception as e:
+                                        if _is_dead(e):
+                                            session.log(f"\U0001f4a5 Crashed during captcha, restarting...")
+                                            break
+                                        else:
+                                            session.log(f"\u26a0\ufe0f Captcha error: {e}")
+                                        time.sleep(2)
+
+                                if not captcha_solved:
                                     continue
 
-                                session.log(f"\U0001f510 Solving captcha (attempt {captcha_attempt + 1})...")
-                                time.sleep(2)
-                                captcha_bytes = captcha_img.first.screenshot()
-                                answer = solve_captcha(captcha_bytes)
-
-                                if not answer:
-                                    session.log("\u26a0\ufe0f OCR failed, refreshing captcha...")
-                                    try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
-                                    except: page.reload(wait_until="domcontentloaded")
-                                    time.sleep(3)
-                                    continue
-
-                                session.log(f"\U0001f524 Answer: '{answer}'")
-                                captcha_input = page.locator("#captchatoken, input[name='captcha_secure'], input[placeholder*='aptcha']")
-                                captcha_input.first.fill(answer)
-                                time.sleep(0.5)
-                                page.locator("button.submit-captcha, form .btn-primary[type='submit']").first.click()
-                                time.sleep(5)
-
-                                try:
-                                    page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=8000)
-                                    session.log("\u2705 Captcha solved!")
-                                    captcha_solved = True
-                                    break
-                                except:
-                                    session.log(f"\u274c Wrong answer '{answer}', retrying...")
-                                    try: page.locator(".modal .btn-secondary, .modal .close, .swal2-confirm, [class*='close']").first.click()
-                                    except: pass
-                                    time.sleep(1)
-                                    try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
-                                    except: pass
-                                    time.sleep(3)
-                            except Exception as e:
-                                if _is_dead(e):
-                                    session.log(f"\U0001f4a5 Crashed during captcha, restarting...")
-                                    break
-                                else:
-                                    session.log(f"\u26a0\ufe0f Captcha error: {e}")
-                                time.sleep(2)
-
-                        if not captcha_solved:
+                            finally:
+                                _captcha_semaphore.release()
+                                session.log("🟢 Released captcha-solving slot")
+                        except Exception as e:
+                            session.log(f"\u274c Captcha semaphore error: {e}")
                             continue
 
-                    # \u2500\u2500 Click service button \u2500\u2500
+                    # ── Click service button (with overlay removal) ──
                     session.log(f"{emoji} Looking for {svc_name} button...")
                     try:
                         page.locator(f".{btn_cls}").wait_for(timeout=30000)
@@ -794,7 +877,27 @@ def run_tab(session, tab_id):
                             session.log(f"\u274c {svc_name} button not found. Restarting...")
                         continue
 
-                    page.locator(f".{btn_cls}").click(force=True, timeout=10000)
+                    # Safe click: scroll into view, try normal click first, then forced if needed
+                    try:
+                        btn_element = page.locator(f".{btn_cls}").first
+                        btn_element.scroll_into_view_if_needed()
+                        time.sleep(0.5)
+                        remove_overlays(page)
+                        time.sleep(0.3)
+                        try:
+                            btn_element.click(timeout=5000)
+                        except:
+                            # Fallback to forced click after clearing overlays again
+                            remove_overlays(page)
+                            time.sleep(0.3)
+                            btn_element.click(force=True, timeout=10000)
+                    except Exception as btn_err:
+                        if _is_dead(btn_err):
+                            session.log(f"\U0001f4a5 Crashed clicking {svc_name} button, restarting...")
+                            continue
+                        session.log(f"\u26a0\ufe0f Error clicking button: {btn_err}, restarting...")
+                        continue
+
                     time.sleep(2)
                     session.log(f"\u2705 {svc_name} panel opened!")
 
@@ -830,6 +933,8 @@ def run_tab(session, tab_id):
                                 # Input not visible — re-open panel
                                 session.log(f"⚠️ Input not visible, re-opening {svc_name} panel...")
                                 try:
+                                    remove_overlays(page)
+                                    time.sleep(0.3)
                                     page.locator(f".{btn_cls}").click()
                                     time.sleep(2)
                                     url_input.wait_for(state="visible", timeout=10000)
@@ -866,12 +971,14 @@ def run_tab(session, tab_id):
                                 url_filled = True
                                 session.log(f"✅ URL filled")
 
-                            # Click Search
+                            # Click Search (with overlay removal)
                             submit_sel = (
                                 f".{menu_cls} button[type='submit'],"
                                 f".{menu_cls} input[type='submit'],"
                                 f".{menu_cls} .btn-primary"
                             )
+                            remove_overlays(page)
+                            time.sleep(0.3)
                             page.locator(submit_sel).first.click()
                             time.sleep(3)
                         except Exception as fill_err:
@@ -897,6 +1004,8 @@ def run_tab(session, tab_id):
                             if "too many" in body_check or "slow down" in body_check:
                                 session.log("⚠️ Too many requests, clicking Search...")
                                 try:
+                                    remove_overlays(page)
+                                    time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
                                 except:
                                     pass
@@ -921,6 +1030,8 @@ def run_tab(session, tab_id):
                                 session.set_countdown("")
                                 session.log("✅ Countdown done — clicking Search...")
                                 try:
+                                    remove_overlays(page)
+                                    time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
                                 except:
                                     pass
@@ -934,6 +1045,8 @@ def run_tab(session, tab_id):
                                 try:
                                     count_btn = page.locator(f".{menu_cls} button.wbutton").first
                                     count_btn.wait_for(state="visible", timeout=20000)
+                                    remove_overlays(page)
+                                    time.sleep(0.3)
                                     count_btn.click()
                                     time.sleep(4)
                                     session.log("💬 Comments loaded")
@@ -945,6 +1058,8 @@ def run_tab(session, tab_id):
                                         session.log("⚠️ 💬 button not found, panel unreadable")
                                     # Click Search to retry
                                     try:
+                                        remove_overlays(page)
+                                        time.sleep(0.3)
                                         page.locator(submit_sel).first.click()
                                     except:
                                         pass
@@ -981,6 +1096,8 @@ def run_tab(session, tab_id):
                                         form_loc = page.locator(f".{menu_cls} form.w1a").nth(idx)
                                         form_loc.locator("select[name='select_lmt']").select_option("100")
                                         time.sleep(1)
+                                        remove_overlays(page)
+                                        time.sleep(0.3)
                                         form_loc.locator("button[type='submit']").click()
                                         session.log(f"💬 Sent 100 hearts to @{target_user} (page {pg + 1})")
                                         found_user = True
@@ -1009,6 +1126,8 @@ def run_tab(session, tab_id):
                             if not found_user:
                                 time.sleep(2)
                                 try:
+                                    remove_overlays(page)
+                                    time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
                                 except:
                                     pass
@@ -1030,6 +1149,8 @@ def run_tab(session, tab_id):
                             # Click Search to go again
                             time.sleep(2)
                             try:
+                                remove_overlays(page)
+                                time.sleep(0.3)
                                 page.locator(submit_sel).first.click()
                             except:
                                 pass
@@ -1064,6 +1185,8 @@ def run_tab(session, tab_id):
                                         f".{menu_cls} input[type='submit'],"
                                         f".{menu_cls} .btn-primary"
                                     )
+                                    remove_overlays(page)
+                                    time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
                                     time.sleep(3)
                                 except:
@@ -1096,6 +1219,8 @@ def run_tab(session, tab_id):
                                         f".{menu_cls} input[type='submit'],"
                                         f".{menu_cls} .btn-primary"
                                     )
+                                    remove_overlays(page)
+                                    time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
                                     time.sleep(1)
                                     page.locator(submit_sel).first.click()
@@ -1113,6 +1238,8 @@ def run_tab(session, tab_id):
                                         f".{menu_cls} input[type='submit'],"
                                         f".{menu_cls} .btn-primary"
                                     )
+                                    remove_overlays(page)
+                                    time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
                                     time.sleep(3)
                                 except:
@@ -1178,6 +1305,8 @@ def run_tab(session, tab_id):
                                         # without the literal text. Click Search again.
                                         session.log("⚠️ No send button yet — likely rate-limited, clicking Search again...")
                                         try:
+                                            remove_overlays(page)
+                                            time.sleep(0.3)
                                             page.locator(submit_sel).first.click()
                                         except:
                                             pass
@@ -1208,6 +1337,8 @@ def run_tab(session, tab_id):
                                     if bar_info:
                                         x, y = bar_info['x'], bar_info['y']
                                         session.log(f"{emoji} Clicking send button ({x:.0f},{y:.0f})...")
+                                        remove_overlays(page)
+                                        time.sleep(0.3)
                                         page.mouse.click(x, y)
                                         time.sleep(3)
                                         continue
@@ -1307,7 +1438,7 @@ def tor_status():
 def list_sessions():
     with sessions_lock:
         data = [s.to_dict() for s in sessions.values()]
-    return jsonify({"sessions": data, "browsers": _active_browsers, "maxBrowsers": MAX_GLOBAL_BROWSERS})
+    return jsonify({"sessions": data, "browsers": _active_browsers, "maxBrowsers": MAX_GLOBAL_BROWSERS, "captchaConcurrency": CAPTCHA_CONCURRENCY})
 
 
 @app.route("/start", methods=["POST"])
