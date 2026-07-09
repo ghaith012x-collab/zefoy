@@ -242,6 +242,20 @@ def inject_anti_detection(page):
         pass
 
 # ═══════════════════════════════════════════════════════════════
+#  HEARTS SEND BUTTON (reference HTML from zefoy.com)
+#  After a successful Search, zefoy shows this button with the
+#  video's current heart count. Click it to send hearts.
+#
+#  <button type="submit" class="wbutton btn btn-dark rounded-0 font-weight-bold p-2">
+#    <i class="fa fa-heart text-danger fa-lg"></i> 58,600
+#  </button>
+#
+#  Primary selector : button.wbutton.btn-dark  (has both wbutton and btn-dark classes)
+#  Fallback selector: button.wbutton           (broader match)
+# ═══════════════════════════════════════════════════════════════
+HEARTS_BTN_SEL = "button.wbutton.btn-dark"
+
+# ═══════════════════════════════════════════════════════════════
 #  SERVICES
 # ═══════════════════════════════════════════════════════════════
 
@@ -793,7 +807,7 @@ def run_tab(session, tab_id):
                             session.log(f"\U0001f310 Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
                         launch_opts["proxy"] = {"server": PROXY_URL}
 
-                    browser = p.chromium.launch(**launch_opts)
+                    browser = p.chromium.launch(slow_mo=100, **launch_opts)  # 0.1s delay between every Playwright action
                     page = browser.new_page(viewport={"width": 800, "height": 600})
                     page.on("dialog", lambda d: d.accept())
 
@@ -1142,7 +1156,7 @@ def run_tab(session, tab_id):
                                 session.log("💬 Comments already visible")
                             else:
                                 try:
-                                    count_btn = page.locator("button.wbutton:visible").first
+                                    count_btn = page.locator(f"{HEARTS_BTN_SEL}:visible, button.wbutton:visible").first
                                     count_btn.wait_for(state="visible", timeout=20000)
                                     remove_overlays(page)
                                     time.sleep(0.3)
@@ -1361,8 +1375,8 @@ def run_tab(session, tab_id):
                                 # Look for send buttons inside the panel's results container first, then globally
                                 _send_selectors = []
                                 if panel_sel:
-                                    _send_selectors += [f'{panel_sel} button.btn-dark:visible', f'{panel_sel} button.wbutton:visible', f'{panel_sel} button.btn-success:visible']
-                                _send_selectors += ['button.btn-dark:visible', 'button.wbutton:visible', 'button.btn-success:visible']
+                                    _send_selectors += [f'{panel_sel} {HEARTS_BTN_SEL}:visible', f'{panel_sel} button.btn-dark:visible', f'{panel_sel} button.wbutton:visible', f'{panel_sel} button.btn-success:visible']
+                                _send_selectors += [f'{HEARTS_BTN_SEL}:visible', 'button.btn-dark:visible', 'button.wbutton:visible', 'button.btn-success:visible']
                                 for send_sel in _send_selectors:
                                     try:
                                         send_btn = page.locator(send_sel).first
