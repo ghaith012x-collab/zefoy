@@ -768,7 +768,39 @@ def run_session(session):
         session.status = "stopped"
 
 
+
 def run_tab(session, tab_id):
+    import time as _time
+    if tab_id not in session.video_buffers:
+        session.video_buffers[tab_id] = FrameBuffer()
+        
+    def z_sleep(seconds):
+        if session.stop_event.is_set():
+            raise Exception("Session stopped")
+        if seconds <= 0: return
+        
+        # Get page from outer scope
+        import inspect
+        frame_rec = inspect.currentframe().f_back
+        pg = frame_rec.f_locals.get('page', None)
+        
+        end_t = _time.time() + seconds
+        while _time.time() < end_t:
+            if session.stop_event.is_set():
+                raise Exception("Session stopped")
+            
+            if pg is not None:
+                try:
+                    frm = capture_screenshot(pg, quality=30)
+                    if frm:
+                        session.video_buffers[tab_id].add_frame(frm)
+                except Exception:
+                    pass
+                    
+            remaining = end_t - _time.time()
+            if remaining > 0:
+                _time.sleep(min(0.5, remaining))
+
     """Runs a single bot tab — each gets its own browser + Tor circuit.
     Wrapped in an outer retry loop so it NEVER permanently dies from crashes."""
     import gc
@@ -802,7 +834,7 @@ def run_tab(session, tab_id):
             if full_restart > 0:
                 wait_time = min(int(backoff), 30)
                 session.log(f"\u267b\ufe0f Full restart #{full_restart} (waiting {wait_time}s)...")
-                time.sleep(wait_time)
+                z_sleep(wait_time)
                 backoff = min(backoff * 1.5, 30)
                 gc.collect()
                 # Force a fresh Tor IP on every restart so a blocked/dead exit
@@ -869,7 +901,7 @@ def run_tab(session, tab_id):
                                 break
                             if _tw == 0:
                                 session.log("\u23f3 Waiting for Tor to bootstrap...")
-                            time.sleep(1)
+                            z_sleep(1)
                         launch_opts["proxy"] = {
                             "server": f"socks5://127.0.0.1:{tor_port}",
                         }
@@ -897,7 +929,7 @@ def run_tab(session, tab_id):
                     except Exception as _goto_err:
                         session.log(f"\U0001f4a5 Page crashed on load ({_goto_err}), restarting...")
                         continue
-                    time.sleep(5)
+                    z_sleep(5)
 
                     # Inject anti-detection scripts (mouse simulation, cookie, overlay cleanup)
                     inject_anti_detection(page)
@@ -925,15 +957,15 @@ def run_tab(session, tab_id):
                             page_text = page.inner_text("body")[:200].lower()
                             if "502" in page_title or "502 bad gateway" in page_text:
                                 session.log(f"\U0001f534 Zefoy is down (502 error), retrying ({page_attempt + 1}/10)...")
-                                time.sleep(10 + page_attempt * 3)
+                                z_sleep(10 + page_attempt * 3)
                                 page.reload(wait_until="domcontentloaded")
-                                time.sleep(5)
+                                z_sleep(5)
                                 continue
                             if "503" in page_title or "cloudflare" in page_text or "just a moment" in page_text:
                                 session.log(f"\U0001f534 Zefoy loading/Cloudflare check ({page_attempt + 1}/10)...")
-                                time.sleep(10 + page_attempt * 3)
+                                z_sleep(10 + page_attempt * 3)
                                 page.reload(wait_until="domcontentloaded")
-                                time.sleep(5)
+                                z_sleep(5)
                                 continue
                         except:
                             pass
@@ -959,7 +991,7 @@ def run_tab(session, tab_id):
                         except Exception as _reload_err:
                             session.log(f"\u26a0\ufe0f Error: {_reload_err} \u2014 restarting tab...")
                             break
-                        time.sleep(10 + page_attempt * 3)
+                        z_sleep(10 + page_attempt * 3)
                     else:
                         session.log("\u26a0\ufe0f Page never became ready, restarting...")
                         continue
@@ -989,11 +1021,11 @@ def run_tab(session, tab_id):
                                         except:
                                             session.log("\u26a0\ufe0f Captcha image not loading, reloading page...")
                                             page.reload(wait_until="domcontentloaded")
-                                            time.sleep(5)
+                                            z_sleep(5)
                                             continue
 
                                         session.log(f"\U0001f510 Solving captcha (attempt {captcha_attempt + 1})...")
-                                        time.sleep(2)
+                                        z_sleep(2)
                                         captcha_bytes = captcha_img.first.screenshot()
                                         answer = solve_captcha(captcha_bytes)
 
@@ -1001,25 +1033,25 @@ def run_tab(session, tab_id):
                                             session.log("\u26a0\ufe0f OCR failed, refreshing captcha...")
                                             try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
                                             except: page.reload(wait_until="domcontentloaded")
-                                            time.sleep(3)
+                                            z_sleep(3)
                                             continue
 
                                         session.log(f"\U0001f524 Answer: '{answer}'")
                                         
                                         # Remove overlays before clicking input
                                         remove_overlays(page)
-                                        time.sleep(0.5)
+                                        z_sleep(0.5)
                                         
                                         captcha_input = page.locator("#captchatoken, input[name='captcha_secure'], input[placeholder*='aptcha' i]")
                                         captcha_input.first.fill(answer)
-                                        time.sleep(0.5)
+                                        z_sleep(0.5)
                                         
                                         # Remove overlays before clicking submit
                                         remove_overlays(page)
-                                        time.sleep(0.3)
+                                        z_sleep(0.3)
                                         
                                         page.locator("button.submit-captcha, form .btn-primary[type='submit']").first.click()
-                                        time.sleep(5)
+                                        z_sleep(5)
 
                                         try:
                                             page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=8000)
@@ -1033,17 +1065,17 @@ def run_tab(session, tab_id):
                                                 # Tightened selector for dismiss button
                                                 page.locator(".swal2-popup .swal2-confirm, .swal2-confirm, .modal.show .btn-secondary, .modal.show .close").first.click()
                                             except: pass
-                                            time.sleep(1)
+                                            z_sleep(1)
                                             try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
                                             except: pass
-                                            time.sleep(3)
+                                            z_sleep(3)
                                     except Exception as e:
                                         if _is_dead(e):
                                             session.log(f"\U0001f4a5 Crashed during captcha, restarting...")
                                             break
                                         else:
                                             session.log(f"\u26a0\ufe0f Captcha error: {e}")
-                                        time.sleep(2)
+                                        z_sleep(2)
 
                                 if not captcha_solved:
                                     continue
@@ -1074,15 +1106,15 @@ def run_tab(session, tab_id):
                     try:
                         btn_element = page.locator(f".{btn_cls}").first
                         btn_element.scroll_into_view_if_needed()
-                        time.sleep(0.5)
+                        z_sleep(0.5)
                         remove_overlays(page)
-                        time.sleep(0.3)
+                        z_sleep(0.3)
                         try:
                             btn_element.click(timeout=5000)
                         except:
                             # Fallback to forced click after clearing overlays again
                             remove_overlays(page)
-                            time.sleep(0.3)
+                            z_sleep(0.3)
                             btn_element.click(force=True, timeout=10000)
                     except Exception as btn_err:
                         if _is_dead(btn_err):
@@ -1091,7 +1123,7 @@ def run_tab(session, tab_id):
                         session.log(f"\u26a0\ufe0f Error clicking button: {btn_err}, restarting...")
                         continue
 
-                    time.sleep(2)
+                    z_sleep(2)
                     inject_anti_detection(page)
                     session.log(f"\u2705 {svc_name} panel opened!")
 
@@ -1120,11 +1152,11 @@ def run_tab(session, tab_id):
                                 session.log(f"⚠️ Input not visible, re-opening {svc_name} panel...")
                                 try:
                                     remove_overlays(page)
-                                    time.sleep(0.3)
+                                    z_sleep(0.3)
                                     remove_overlays(page)
-                                    time.sleep(0.3)
+                                    z_sleep(0.3)
                                     page.locator(f".{btn_cls}").first.click(force=True)
-                                    time.sleep(2)
+                                    z_sleep(2)
                                     url_input.wait_for(state="visible", timeout=10000)
                                     input_fail_count = 0
                                 except:
@@ -1146,31 +1178,31 @@ def run_tab(session, tab_id):
                                         session.log(f"❌ Input not found after {MAX_INPUT_FAILS} attempts, restarting browser...")
                                         break
                                     session.log(f"⚠️ Still can't find input after re-open, retrying ({input_fail_count}/{MAX_INPUT_FAILS})...")
-                                    time.sleep(3)
+                                    z_sleep(3)
                                     continue
                                 url_filled = False  # panel reopened, need to fill again
 
                             # Only fill URL the first time (or after panel re-open)
                             if not url_filled:
                                 url_input.fill("")
-                                time.sleep(0.3)
+                                z_sleep(0.3)
                                 url_input.fill(session.video_url)
-                                time.sleep(1)
+                                z_sleep(1)
                                 url_filled = True
                                 session.log(f"✅ URL filled")
 
                             # Click Search (with overlay removal) — panel-scoped
                             submit_sel = submit_panel_sel
                             remove_overlays(page)
-                            time.sleep(0.3)
+                            z_sleep(0.3)
                             page.locator(submit_sel).first.click()
-                            time.sleep(3)
+                            z_sleep(3)
                         except Exception as fill_err:
                             if _is_dead(fill_err):
                                 session.log("💥 Crashed filling URL, restarting...")
                                 break
                             session.log(f"⚠️ Error: {fill_err}")
-                            time.sleep(3)
+                            z_sleep(3)
                             continue
 
                         # ── Comment Hearts: click 💬, find user, select 100, click heart, loop ──
@@ -1189,11 +1221,11 @@ def run_tab(session, tab_id):
                                 session.log("⚠️ Too many requests, clicking Search...")
                                 try:
                                     remove_overlays(page)
-                                    time.sleep(0.3)
+                                    z_sleep(0.3)
                                     page.locator(submit_panel_sel).first.click()
                                 except:
                                     pass
-                                time.sleep(3)
+                                z_sleep(3)
                                 continue
 
                             # Countdown? Wait it out, then click Search
@@ -1210,16 +1242,16 @@ def run_tab(session, tab_id):
                                     secs = remaining % 60
                                     time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
                                     session.set_countdown(f"⏳ {time_str}")
-                                    time.sleep(1)
+                                    z_sleep(1)
                                 session.set_countdown("")
                                 session.log("✅ Countdown done — clicking Search...")
                                 try:
                                     remove_overlays(page)
-                                    time.sleep(0.3)
+                                    z_sleep(0.3)
                                     page.locator(submit_panel_sel).first.click()
                                 except:
                                     pass
-                                time.sleep(3)
+                                z_sleep(3)
                                 continue
 
                             # B: Wait for 💬 count button and click it
@@ -1230,9 +1262,9 @@ def run_tab(session, tab_id):
                                     count_btn = page.locator(f"{HEARTS_BTN_SEL}:visible, button.wbutton:visible").first
                                     count_btn.wait_for(state="visible", timeout=20000)
                                     remove_overlays(page)
-                                    time.sleep(0.3)
+                                    z_sleep(0.3)
                                     count_btn.click()
-                                    time.sleep(4)
+                                    z_sleep(4)
                                     session.log("💬 Comments loaded")
                                 except:
                                     try:
@@ -1243,11 +1275,11 @@ def run_tab(session, tab_id):
                                     # Click Search to retry
                                     try:
                                         remove_overlays(page)
-                                        time.sleep(0.3)
+                                        z_sleep(0.3)
                                         page.locator(submit_panel_sel).first.click()
                                     except:
                                         pass
-                                    time.sleep(3)
+                                    z_sleep(3)
                                     continue
 
                             # C: Find target username — paginate through ALL comment pages
@@ -1279,20 +1311,20 @@ def run_tab(session, tab_id):
                                         idx = result['index']
                                         form_loc = page.locator("form.w1a").nth(idx)
                                         form_loc.locator("select[name='select_lmt']").select_option("100")
-                                        time.sleep(1)
+                                        z_sleep(1)
                                         remove_overlays(page)
-                                        time.sleep(0.3)
+                                        z_sleep(0.3)
                                         form_loc.locator("button[type='submit']").click()
                                         session.log(f"💬 Sent 100 hearts to @{target_user} (page {pg + 1})")
                                         found_user = True
-                                        time.sleep(3)
+                                        z_sleep(3)
                                         break
 
                                     if result.get('hasNext'):
                                         if pg == 0:
                                             session.log(f"🔍 @{target_user} not on page 1, paginating...")
                                         page.locator('li[title="Next"] button').click()
-                                        time.sleep(4)
+                                        z_sleep(4)
                                     else:
                                         total_scanned = (pg * 40) + result.get('total', 0)
                                         session.log(f"❌ @{target_user} not found in {total_scanned} comments ({pg + 1} pages)")
@@ -1308,14 +1340,14 @@ def run_tab(session, tab_id):
                             if crashed:
                                 break
                             if not found_user:
-                                time.sleep(2)
+                                z_sleep(2)
                                 try:
                                     remove_overlays(page)
-                                    time.sleep(0.3)
+                                    z_sleep(0.3)
                                     page.locator(submit_panel_sel).first.click()
                                 except:
                                     pass
-                                time.sleep(3)
+                                z_sleep(3)
                                 continue
 
                             # D: Check result — no countdown for comment hearts
@@ -1331,14 +1363,14 @@ def run_tab(session, tab_id):
                                 session.log("⚠️ Too many requests")
 
                             # Click Search to go again
-                            time.sleep(2)
+                            z_sleep(2)
                             try:
                                 remove_overlays(page)
-                                time.sleep(0.3)
+                                z_sleep(0.3)
                                 page.locator(submit_panel_sel).first.click()
                             except:
                                 pass
-                            time.sleep(3)
+                            z_sleep(3)
                             continue  # Skip regular hearts response handler
 
                         # ── Step 2: Check what happened after Search ──
@@ -1354,7 +1386,7 @@ def run_tab(session, tab_id):
                                 if _is_dead(e):
                                     crashed = True
                                     break
-                                time.sleep(1)
+                                z_sleep(1)
                                 continue
 
                             lower_body = body.lower()
@@ -1362,13 +1394,13 @@ def run_tab(session, tab_id):
                             # ── "Too many requests" → just click Search again ──
                             if "too many" in lower_body or "slow down" in lower_body:
                                 session.log("⚠️ Too many requests — clicking Search again...")
-                                time.sleep(2)
+                                z_sleep(2)
                                 try:
                                     submit_sel = submit_panel_sel
                                     remove_overlays(page)
-                                    time.sleep(0.3)
+                                    z_sleep(0.3)
                                     page.locator(submit_sel).first.click()
-                                    time.sleep(3)
+                                    z_sleep(3)
                                 except:
                                     pass
                                 continue
@@ -1388,7 +1420,7 @@ def run_tab(session, tab_id):
                                     secs = remaining % 60
                                     time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
                                     session.set_countdown(f"⏳ {time_str}")
-                                    time.sleep(1)
+                                    z_sleep(1)
                                 session.set_countdown("")
 
                                 # Click Search 2 times after countdown
@@ -1396,11 +1428,11 @@ def run_tab(session, tab_id):
                                 try:
                                     submit_sel = submit_panel_sel
                                     remove_overlays(page)
-                                    time.sleep(0.3)
+                                    z_sleep(0.3)
                                     page.locator(submit_sel).first.click()
-                                    time.sleep(1)
+                                    z_sleep(1)
                                     page.locator(submit_sel).first.click()
-                                    time.sleep(3)
+                                    z_sleep(3)
                                 except:
                                     pass
                                 continue
@@ -1411,9 +1443,9 @@ def run_tab(session, tab_id):
                                 try:
                                     submit_sel = submit_panel_sel
                                     remove_overlays(page)
-                                    time.sleep(0.3)
+                                    z_sleep(0.3)
                                     page.locator(submit_sel).first.click()
-                                    time.sleep(3)
+                                    z_sleep(3)
                                 except:
                                     pass
                                 continue
@@ -1442,7 +1474,7 @@ def run_tab(session, tab_id):
                             send_clicked = False
                             try:
                                 remove_overlays(page)
-                                time.sleep(0.3)
+                                z_sleep(0.3)
                                 # Look for send buttons inside the panel's results container first, then globally
                                 _send_selectors = []
                                 if panel_sel:
@@ -1455,7 +1487,7 @@ def run_tab(session, tab_id):
                                             send_btn.click()
                                             send_clicked = True
                                             session.log(f"{emoji} Clicked send button!")
-                                            time.sleep(3)
+                                            z_sleep(3)
                                             break
                                     except:
                                         continue
@@ -1481,7 +1513,7 @@ def run_tab(session, tab_id):
                                     }""")
                                     if send_clicked:
                                         session.log(f"{emoji} Clicked send button (JS fallback)!")
-                                        time.sleep(3)
+                                        z_sleep(3)
                                 if send_clicked:
                                     continue
                             except:
@@ -1489,7 +1521,7 @@ def run_tab(session, tab_id):
 
                             # ── Still loading / waiting ──
                             if check_i < 30:
-                                time.sleep(1)
+                                z_sleep(1)
                                 continue
                             else:
                                 session.log(f"⚠️ No response after {check_i}s, breaking to retry...")
@@ -1499,7 +1531,7 @@ def run_tab(session, tab_id):
                             session.log("💥 Crashed in main loop, restarting tab...")
                             break
 
-                        time.sleep(2)
+                        z_sleep(2)
                         if cycle % 10 == 0:
                             gc.collect()
 
@@ -1681,18 +1713,19 @@ def stream_all():
 
 @app.route("/stream/video/<int:sid>/<int:tab_id>")
 def stream_video(sid, tab_id):
-    """MJPEG video stream for a specific tab."""
+    """Single frame video stream for a specific tab."""
     with sessions_lock:
         session = sessions.get(sid)
     
     if not session or tab_id not in session.video_buffers:
         return "Video not available", 404
     
-    return Response(
-        generate_mjpeg_stream(session.video_buffers[tab_id], fps=2),
-        mimetype="multipart/x-mixed-replace; boundary=FRAME",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-    )
+    frame = session.video_buffers[tab_id].get_latest()
+    if not frame:
+        return "No frame", 404
+    
+    return Response(frame, mimetype="image/jpeg", headers={"Cache-Control": "no-cache"})
+
 
 
 @app.route("/tabs/<int:sid>")

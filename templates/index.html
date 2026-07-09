@@ -553,30 +553,42 @@ function updateVideoStream(sid) {
             
             const tabs = data.tabs || [];
             
-            // Clear existing
-            gridEl.innerHTML = '';
+            // Check if DOM already matches tabs
+            const currentImages = Array.from(gridEl.querySelectorAll('img'));
+            const currentTabIds = currentImages.map(img => img.dataset.tabId);
             
-            // Single tab
-            if (tabs.length === 1) {
-                const tabId = tabs[0];
-                const img = document.createElement('img');
-                img.src = `/stream/video/${sid}/${tabId}?_=${Date.now()}`;
-                img.className = 'video-stream';
-                img.alt = `Tab ${tabId}`;
-                gridEl.appendChild(img);
-            }
-            // Multiple tabs - grid
-            else if (tabs.length > 1) {
-                tabs.forEach(tabId => {
-                    const item = document.createElement('div');
-                    item.className = 'video-grid-item';
+            const tabsChanged = tabs.length !== currentTabIds.length || !tabs.every((val, index) => val == currentTabIds[index]);
+            
+            if (tabsChanged) {
+                // Rebuild DOM
+                gridEl.innerHTML = '';
+                if (tabs.length === 1) {
+                    const tabId = tabs[0];
                     const img = document.createElement('img');
+                    img.dataset.tabId = tabId;
                     img.src = `/stream/video/${sid}/${tabId}?_=${Date.now()}`;
+                    img.className = 'video-stream';
                     img.alt = `Tab ${tabId}`;
-                    img.style.width = '100%';
-                    img.style.height = '100%';
-                    item.appendChild(img);
-                    gridEl.appendChild(item);
+                    gridEl.appendChild(img);
+                } else if (tabs.length > 1) {
+                    tabs.forEach(tabId => {
+                        const item = document.createElement('div');
+                        item.className = 'video-grid-item';
+                        const img = document.createElement('img');
+                        img.dataset.tabId = tabId;
+                        img.src = `/stream/video/${sid}/${tabId}?_=${Date.now()}`;
+                        img.alt = `Tab ${tabId}`;
+                        img.style.width = '100%';
+                        img.style.height = '100%';
+                        item.appendChild(img);
+                        gridEl.appendChild(item);
+                    });
+                }
+            } else {
+                // Update src of existing images
+                currentImages.forEach(img => {
+                    const tabId = img.dataset.tabId;
+                    img.src = `/stream/video/${sid}/${tabId}?_=${Date.now()}`;
                 });
             }
         })
