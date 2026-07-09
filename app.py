@@ -127,16 +127,22 @@ def renew_tor_circuit():
 # ═══════════════════════════════════════════════════════════════
 
 def remove_overlays(page):
-    """Strip ad iframes and consent dialogs that can intercept clicks."""
+    """Strip ad iframes and consent dialogs that can intercept clicks (2026 DOM)."""
     try:
         page.evaluate("""() => {
             // Remove all iframes (ads, consent dialogs)
             document.querySelectorAll('iframe').forEach(el => el.remove());
             // Remove Funding Choices and Google consent popups
             document.querySelectorAll('.fc-dialog-overlay, .fc-monetization-dialog-container, .fc-message-root, .fc-consent-root').forEach(el => el.remove());
-            // Remove any floating overlays
+            // Remove Google ads containers
+            document.querySelectorAll('.adsbygoogle, .ad-container, iframe[src*="googleads"], iframe[src*="ads"], iframe.adsbygoogle').forEach(el => el.remove());
+            // Remove any floating overlays with high z-index
             document.querySelectorAll('[style*="position: fixed"], [style*="position: absolute"]').forEach(el => {
                 if (el.style.zIndex && parseInt(el.style.zIndex) > 9000) el.remove();
+            });
+            // Auto-dismiss consent buttons
+            document.querySelectorAll('button').forEach(btn => {
+                if (btn.textContent.includes('Consent') && btn.offsetParent !== null) btn.click();
             });
         }""")
     except:
@@ -244,6 +250,7 @@ SERVICES = {
         "name": "Hearts",
         "emoji": "❤️",
         "button_class": "t-hearts-button",
+        "menu_class": "t-hearts-menu",
         "unit": "hearts",
         "engine": "zefoy",
     },
@@ -251,6 +258,7 @@ SERVICES = {
         "name": "Views",
         "emoji": "👁️",
         "button_class": "t-views-button",
+        "menu_class": "t-views-menu",
         "unit": "views",
         "engine": "zefoy",
     },
@@ -258,6 +266,7 @@ SERVICES = {
         "name": "Comment Hearts",
         "emoji": "💬",
         "button_class": "t-chearts-button",
+        "menu_class": "t-chearts-menu",
         "unit": "hearts",
         "engine": "zefoy",
     },
@@ -265,6 +274,7 @@ SERVICES = {
         "name": "Shares",
         "emoji": "🔄",
         "button_class": "t-shares-button",
+        "menu_class": "t-shares-menu",
         "unit": "shares",
         "engine": "zefoy",
     },
@@ -272,6 +282,7 @@ SERVICES = {
         "name": "Favorites",
         "emoji": "⭐",
         "button_class": "t-favorites-button",
+        "menu_class": "t-favorites-menu",
         "unit": "favorites",
         "engine": "zefoy",
     },
@@ -279,6 +290,7 @@ SERVICES = {
         "name": "Followers",
         "emoji": "👥",
         "button_class": "t-followers-button",
+        "menu_class": "t-followers-menu",
         "unit": "followers",
         "engine": "zefoy",
     },
@@ -678,8 +690,14 @@ def run_tab(session, tab_id):
     svc = session.svc
     svc_name = svc["name"]
     btn_cls = svc["button_class"]
+    menu_cls = svc.get("menu_class", "")
     unit = svc["unit"]
     emoji = svc["emoji"]
+    # Panel-scoped selectors (2026 DOM)
+    panel_sel = f".{menu_cls}" if menu_cls else ""
+    input_panel_sel = f".{menu_cls} input[placeholder='Enter Video URL']:visible" if menu_cls else 'input[placeholder="Enter Video URL"]:visible, input[type="search"]:visible'
+    submit_panel_sel = f".{menu_cls} button[type='submit']" if menu_cls else 'button:has-text("Search"):visible'
+    results_panel_sel = f".{menu_cls} div[id]" if menu_cls else ""
     multi = session.num_tabs > 1
 
     # Set thread-local prefix for log messages
@@ -1007,8 +1025,7 @@ def run_tab(session, tab_id):
                         session.log(f"🔄 Cycle {cycle}")
 
                         try:
-                            input_sel = 'input[placeholder="Enter Video URL"]:visible, input[type="search"]:visible'
-                            url_input = page.locator(input_sel).first
+                            url_input = page.locator(input_panel_sel).first
 
                             try:
                                 url_input.wait_for(state="visible", timeout=5000)
@@ -1057,8 +1074,8 @@ def run_tab(session, tab_id):
                                 url_filled = True
                                 session.log(f"✅ URL filled")
 
-                            # Click Search (with overlay removal)
-                            submit_sel = 'button:has-text("Search"):visible'
+                            # Click Search (with overlay removal) — panel-scoped
+                            submit_sel = submit_panel_sel
                             remove_overlays(page)
                             time.sleep(0.3)
                             page.locator(submit_sel).first.click()
@@ -1088,7 +1105,7 @@ def run_tab(session, tab_id):
                                 try:
                                     remove_overlays(page)
                                     time.sleep(0.3)
-                                    page.locator(submit_sel).first.click()
+                                    page.locator(submit_panel_sel).first.click()
                                 except:
                                     pass
                                 time.sleep(3)
@@ -1114,7 +1131,7 @@ def run_tab(session, tab_id):
                                 try:
                                     remove_overlays(page)
                                     time.sleep(0.3)
-                                    page.locator(submit_sel).first.click()
+                                    page.locator(submit_panel_sel).first.click()
                                 except:
                                     pass
                                 time.sleep(3)
@@ -1142,7 +1159,7 @@ def run_tab(session, tab_id):
                                     try:
                                         remove_overlays(page)
                                         time.sleep(0.3)
-                                        page.locator(submit_sel).first.click()
+                                        page.locator(submit_panel_sel).first.click()
                                     except:
                                         pass
                                     time.sleep(3)
@@ -1210,7 +1227,7 @@ def run_tab(session, tab_id):
                                 try:
                                     remove_overlays(page)
                                     time.sleep(0.3)
-                                    page.locator(submit_sel).first.click()
+                                    page.locator(submit_panel_sel).first.click()
                                 except:
                                     pass
                                 time.sleep(3)
@@ -1233,7 +1250,7 @@ def run_tab(session, tab_id):
                             try:
                                 remove_overlays(page)
                                 time.sleep(0.3)
-                                page.locator(submit_sel).first.click()
+                                page.locator(submit_panel_sel).first.click()
                             except:
                                 pass
                             time.sleep(3)
@@ -1262,7 +1279,7 @@ def run_tab(session, tab_id):
                                 session.log("⚠️ Too many requests — clicking Search again...")
                                 time.sleep(2)
                                 try:
-                                    submit_sel = 'button:has-text("Search"):visible'
+                                    submit_sel = submit_panel_sel
                                     remove_overlays(page)
                                     time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
@@ -1292,7 +1309,7 @@ def run_tab(session, tab_id):
                                 # Click Search 2 times after countdown
                                 session.log("✅ Countdown done — clicking Search 2x...")
                                 try:
-                                    submit_sel = 'button:has-text("Search"):visible'
+                                    submit_sel = submit_panel_sel
                                     remove_overlays(page)
                                     time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
@@ -1307,7 +1324,7 @@ def run_tab(session, tab_id):
                             if "ready" in lower_body and "next submit" in lower_body:
                                 session.log("✅ Ready — clicking Search...")
                                 try:
-                                    submit_sel = 'button:has-text("Search"):visible'
+                                    submit_sel = submit_panel_sel
                                     remove_overlays(page)
                                     time.sleep(0.3)
                                     page.locator(submit_sel).first.click()
@@ -1341,7 +1358,12 @@ def run_tab(session, tab_id):
                             try:
                                 remove_overlays(page)
                                 time.sleep(0.3)
-                                for send_sel in ['button.btn-dark:visible', 'button.wbutton:visible', 'button.btn-success:visible']:
+                                # Look for send buttons inside the panel's results container first, then globally
+                                _send_selectors = []
+                                if panel_sel:
+                                    _send_selectors += [f'{panel_sel} button.btn-dark:visible', f'{panel_sel} button.wbutton:visible', f'{panel_sel} button.btn-success:visible']
+                                _send_selectors += ['button.btn-dark:visible', 'button.wbutton:visible', 'button.btn-success:visible']
+                                for send_sel in _send_selectors:
                                     try:
                                         send_btn = page.locator(send_sel).first
                                         if send_btn.is_visible(timeout=2000):
