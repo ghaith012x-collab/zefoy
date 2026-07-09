@@ -599,6 +599,30 @@ def resolve_comment_link(url):
 #  SESSION MANAGEMENT
 # ════════════════════════════════════════════════��══════════════
 
+
+# ═══════════════════════════════════════════════════════════════
+#  LIVE VIDEO STREAMING
+# ═══════════════════════════════════════════════════════════════
+
+class FrameBuffer:
+    """FIFO buffer for storing screenshots for MJPEG streaming."""
+    def __init__(self, max_frames=20):
+        self.buffer = deque(maxlen=max_frames)
+        self.lock = threading.Lock()
+    
+    def add_frame(self, frame_bytes):
+        with self.lock:
+            self.buffer.append(frame_bytes)
+    
+    def get_latest(self):
+        with self.lock:
+            return self.buffer[-1] if self.buffer else None
+    
+    def get_all(self):
+        with self.lock:
+            return list(self.buffer)
+
+
 class Session:
     _counter = 0
     _lock = threading.Lock()
@@ -621,6 +645,7 @@ class Session:
         self.thread = None
         self.count_lock = threading.Lock()
         self.active_tabs = 0
+        self.video_buffers = {}  # {tab_id: FrameBuffer}
 
     @property
     def svc(self):
@@ -671,6 +696,52 @@ sessions_lock = threading.Lock()
 # ═══════════════════════════════════════════════════════════════
 #  BOT LOOP
 # ═══════════════════════════════════════════════════════════════
+
+
+
+def capture_screenshot(page, quality=60, max_width=1280):
+    """Capture a screenshot from a Playwright page."""
+    try:
+        screenshot_bytes = page.screenshot(type='jpeg', quality=quality)
+        # Optionally resize if very large
+        img = Image.open(BytesIO(screenshot_bytes))
+        if img.width > max_width:
+            ratio = max_width / img.width
+            new_height = int(img.height * ratio)
+            img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format='JPEG', quality=quality)
+            return buf.getvalue()
+        return screenshot_bytes
+    except Exception as e:
+        print(f"[VIDEO] Screenshot error: {e}", flush=True)
+        return None
+
+
+def generate_mjpeg_stream(frame_buffer, fps=2):
+    """Generator that yields MJPEG stream data."""
+    frame_interval = 1.0 / fps
+    last_frame_time = time.time()
+    
+    while True:
+        current_time = time.time()
+        if current_time - last_frame_time < frame_interval:
+            time.sleep(0.01)
+            continue
+        
+        frame_data = frame_buffer.get_latest()
+        if frame_data is None:
+            time.sleep(0.05)
+            continue
+        
+        # MJPEG format
+        yield (b'--FRAME\r\n'
+               b'Content-Type: image/jpeg\r\n'
+               b'Content-Length: ' + str(len(frame_data)).encode() + b'\r\n'
+               b'\r\n' + frame_data + b'\r\n')
+        
+        last_frame_time = current_time
+        time.sleep(0.01)
 
 def run_session(session):
     """Orchestrates one or more tabs for this session."""
@@ -1606,6 +1677,35 @@ def stream_all():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+@app.route("/stream/video/<int:sid>/<int:tab_id>")
+def stream_video(sid, tab_id):
+    """MJPEG video stream for a specific tab."""
+    with sessions_lock:
+        session = sessions.get(sid)
+    
+    if not session or tab_id not in session.video_buffers:
+        return "Video not available", 404
+    
+    return Response(
+        generate_mjpeg_stream(session.video_buffers[tab_id], fps=2),
+        mimetype="multipart/x-mixed-replace; boundary=FRAME",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@app.route("/tabs/<int:sid>")
+def get_tabs(sid):
+    """Get list of active tabs for a session."""
+    with sessions_lock:
+        session = sessions.get(sid)
+    
+    if not session:
+        return jsonify({"error": "Not found"}), 404
+    
+    tabs = list(session.video_buffers.keys())
+    return jsonify({"tabs": tabs, "num_tabs": session.num_tabs})
 
 
 @app.route("/remove/<int:sid>", methods=["POST"])

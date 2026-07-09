@@ -98,6 +98,66 @@ body::before {
 .sessions { max-width:1320px; margin:22px auto 60px; padding:0 16px; display:grid; grid-template-columns:repeat(auto-fill, minmax(350px, 1fr)); gap:18px; }
 .empty { text-align:center; color:var(--muted); padding:60px 20px; font-size:0.95rem; grid-column:1/-1; }
 
+/* 🎥 Live Video Player Styles */
+.video-container { 
+    display:none; 
+    margin:12px 0; 
+    background:rgba(0,0,0,0.4); 
+    border:1px solid var(--border); 
+    border-radius:12px; 
+    overflow:hidden;
+    position:relative;
+}
+.video-container.active { display:block; }
+.video-stream { 
+    width:100%; 
+    height:auto; 
+    display:block; 
+    max-height:400px;
+    object-fit:contain;
+}
+.video-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));
+    gap:8px;
+    padding:8px;
+}
+.video-grid-item {
+    background:rgba(0,0,0,0.5);
+    border:1px solid var(--border);
+    border-radius:8px;
+    overflow:hidden;
+    aspect-ratio:16/9;
+}
+.video-grid-item img {
+    width:100%;
+    height:100%;
+    object-fit:contain;
+}
+.btn-camera {
+    background:rgba(139,92,246,0.18);
+    border:1px solid var(--border);
+    color:var(--text);
+    padding:6px 12px;
+    border-radius:8px;
+    cursor:pointer;
+    font-size:0.85rem;
+    font-weight:600;
+    transition:all 0.2s;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+}
+.btn-camera:hover {
+    background:rgba(139,92,246,0.28);
+    box-shadow:0 0 12px rgba(139,92,246,0.3);
+}
+.btn-camera.active {
+    background:rgba(52,211,153,0.18);
+    border-color:var(--good);
+    color:var(--good);
+}
+
 .card {
     background:var(--panel); backdrop-filter:blur(14px);
     border:1px solid var(--border); border-radius:18px; padding:18px;
@@ -283,6 +343,7 @@ function createCard(s) {
             </div>
             <div class="card-actions">
                 <span class="status-badge status-starting" id="status-${s.id}"><span class="dot"></span>STARTING</span>
+                <button class="btn-camera" onclick="toggleVideo(${s.id})" id="camBtn-${s.id}" title="Toggle live video">📹</button>
                 <button class="btn-stop" onclick="stopSession(${s.id})" id="stopBtn-${s.id}">■ Stop</button>
                 <button class="btn-remove" onclick="deleteSession(${s.id})" title="Delete session">✕</button>
             </div>
@@ -294,6 +355,9 @@ function createCard(s) {
         </div>
         <div class="card-url">🔗 <span class="u">${s.url}</span>${s.username ? '<br>👤 @' + s.username : ''}</div>
         ${tabsInfo}
+        <div class="video-container" id="video-${s.id}">
+            <div class="video-grid" id="video-grid-${s.id}"></div>
+        </div>
         <div class="log-box" id="log-${s.id}"></div>
         <div class="countdown-bar" id="cd-${s.id}" style="display:none"></div>
     `;
@@ -434,6 +498,90 @@ fetch('/sessions').then(r => r.json()).then(data => {
     updateGlobalStats();
     updateEmptyState();
 });
+
+// 🎥 Live Video Streaming
+const videoStates = {}; // {sid: {active: bool, lastUpdate: time}}
+
+function toggleVideo(sid) {
+    if (!videoStates[sid]) {
+        videoStates[sid] = {active: false, lastUpdate: 0};
+    }
+    
+    const state = videoStates[sid];
+    const container = document.getElementById('video-' + sid);
+    const camBtn = document.getElementById('camBtn-' + sid);
+    
+    state.active = !state.active;
+    
+    if (state.active) {
+        container.classList.add('active');
+        camBtn.classList.add('active');
+        updateVideoStream(sid);
+        startVideoRefresh(sid);
+    } else {
+        container.classList.remove('active');
+        camBtn.classList.remove('active');
+        stopVideoRefresh(sid);
+    }
+}
+
+const videoIntervals = {}; // {sid: intervalId}
+
+function startVideoRefresh(sid) {
+    if (videoIntervals[sid]) clearInterval(videoIntervals[sid]);
+    
+    videoIntervals[sid] = setInterval(() => {
+        if (videoStates[sid]?.active) {
+            updateVideoStream(sid);
+        }
+    }, 500); // Update every 500ms (~2 FPS)
+}
+
+function stopVideoRefresh(sid) {
+    if (videoIntervals[sid]) {
+        clearInterval(videoIntervals[sid]);
+        delete videoIntervals[sid];
+    }
+}
+
+function updateVideoStream(sid) {
+    fetch('/tabs/' + sid)
+        .then(r => r.json())
+        .then(data => {
+            const gridEl = document.getElementById('video-grid-' + sid);
+            if (!gridEl || !data.tabs) return;
+            
+            const tabs = data.tabs || [];
+            
+            // Clear existing
+            gridEl.innerHTML = '';
+            
+            // Single tab
+            if (tabs.length === 1) {
+                const tabId = tabs[0];
+                const img = document.createElement('img');
+                img.src = `/stream/video/${sid}/${tabId}?_=${Date.now()}`;
+                img.className = 'video-stream';
+                img.alt = `Tab ${tabId}`;
+                gridEl.appendChild(img);
+            }
+            // Multiple tabs - grid
+            else if (tabs.length > 1) {
+                tabs.forEach(tabId => {
+                    const item = document.createElement('div');
+                    item.className = 'video-grid-item';
+                    const img = document.createElement('img');
+                    img.src = `/stream/video/${sid}/${tabId}?_=${Date.now()}`;
+                    img.alt = `Tab ${tabId}`;
+                    img.style.width = '100%';
+                    img.style.height = '100%';
+                    item.appendChild(img);
+                    gridEl.appendChild(item);
+                });
+            }
+        })
+        .catch(err => console.error('Video update error:', err));
+}
 </script>
 </body>
 </html>
