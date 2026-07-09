@@ -121,6 +121,7 @@ body::before {
     grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));
     gap:8px;
     padding:8px;
+    padding-top:32px; /* Space for fullscreen btn */
 }
 .video-grid-item {
     background:rgba(0,0,0,0.5);
@@ -356,6 +357,9 @@ function createCard(s) {
         <div class="card-url">🔗 <span class="u">${s.url}</span>${s.username ? '<br>👤 @' + s.username : ''}</div>
         ${tabsInfo}
         <div class="video-container" id="video-${s.id}">
+            <div style="position:absolute; top:8px; right:8px; z-index:10;">
+                <button onclick="toggleFullScreen('video-${s.id}')" title="Full Screen" style="background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.3); color:#fff; border-radius:4px; cursor:pointer; padding:4px 8px; font-size:12px;">⛶</button>
+            </div>
             <div class="video-grid" id="video-grid-${s.id}"></div>
         </div>
         <div class="log-box" id="log-${s.id}"></div>
@@ -562,28 +566,42 @@ function updateVideoStream(sid) {
             if (tabsChanged) {
                 // Rebuild DOM
                 gridEl.innerHTML = '';
-                if (tabs.length === 1) {
-                    const tabId = tabs[0];
+                
+                tabs.forEach((tabId, idx) => {
+                    const item = document.createElement('div');
+                    item.className = 'video-grid-item';
+                    item.style.position = 'relative';
+                    
                     const img = document.createElement('img');
                     img.dataset.tabId = tabId;
                     img.src = `/stream/video/${sid}/${tabId}?_=${Date.now()}`;
-                    img.className = 'video-stream';
                     img.alt = `Tab ${tabId}`;
-                    gridEl.appendChild(img);
-                } else if (tabs.length > 1) {
-                    tabs.forEach(tabId => {
-                        const item = document.createElement('div');
-                        item.className = 'video-grid-item';
-                        const img = document.createElement('img');
-                        img.dataset.tabId = tabId;
-                        img.src = `/stream/video/${sid}/${tabId}?_=${Date.now()}`;
-                        img.alt = `Tab ${tabId}`;
+                    
+                    if (tabs.length === 1) {
+                        img.className = 'video-stream';
+                    } else {
                         img.style.width = '100%';
                         img.style.height = '100%';
-                        item.appendChild(img);
-                        gridEl.appendChild(item);
-                    });
-                }
+                        img.style.objectFit = 'contain';
+                    }
+                    
+                    const label = document.createElement('div');
+                    label.textContent = `Tab ${idx + 1}`;
+                    label.style.position = 'absolute';
+                    label.style.top = '4px';
+                    label.style.left = '4px';
+                    label.style.background = 'rgba(0,0,0,0.6)';
+                    label.style.color = '#fff';
+                    label.style.fontSize = '12px';
+                    label.style.fontWeight = 'bold';
+                    label.style.padding = '2px 6px';
+                    label.style.borderRadius = '4px';
+                    label.style.pointerEvents = 'none';
+
+                    item.appendChild(img);
+                    item.appendChild(label);
+                    gridEl.appendChild(item);
+                });
             } else {
                 // Update src of existing images
                 currentImages.forEach(img => {
@@ -593,6 +611,28 @@ function updateVideoStream(sid) {
             }
         })
         .catch(err => console.error('Video update error:', err));
+}
+
+function toggleFullScreen(containerId) {
+    const elem = document.getElementById(containerId);
+    if (!elem) return;
+    if (!document.fullscreenElement) {
+        if (elem.requestFullscreen) {
+            elem.requestFullscreen();
+        } else if (elem.webkitRequestFullscreen) { /* Safari */
+            elem.webkitRequestFullscreen();
+        } else if (elem.msRequestFullscreen) { /* IE11 */
+            elem.msRequestFullscreen();
+        }
+    } else {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) { /* Safari */
+            document.webkitExitFullscreen();
+        } else if (document.msExitFullscreen) { /* IE11 */
+            document.msExitFullscreen();
+        }
+    }
 }
 </script>
 </body>
