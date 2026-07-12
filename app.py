@@ -10,7 +10,7 @@ def is_dead(e):
     """Return True if the exception means the browser/page is gone."""
     s = str(e).lower()
     t = type(e).__name__.lower()
-    return ("target page" in s or "browser has been closed" or
+    return ("target page" in s or "browser has been closed" in s or
             "target closed" in s or "crash" in s or "disposed" in s or
             "connection closed" in s or "browser disconnected" in s or
             "frame was detached" in s or "err_aborted" in s or
@@ -21,9 +21,9 @@ def is_dead(e):
 
 _tab_prefix = threading.local()
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #  CONCURRENCY LIMITS
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 CAPTCHA_CONCURRENCY = int(os.environ.get("CAPTCHA_CONCURRENCY", "3"))
 _captcha_semaphore = threading.Semaphore(CAPTCHA_CONCURRENCY)
 _ocr_semaphore = threading.Semaphore(CAPTCHA_CONCURRENCY)
@@ -74,7 +74,7 @@ def renew_tor_circuit():
     try:
         cookie_path = "/tmp/tor-data/control_auth_cookie"
         if not os.path.exists(cookie_path):
-            print("[TOR] No control cookie found — cannot renew circuit", flush=True)
+            print("[TOR] No control cookie found â€” cannot renew circuit", flush=True)
             return False
         with open(cookie_path, "rb") as f:
             cookie = f.read()
@@ -91,7 +91,7 @@ def renew_tor_circuit():
         resp = s.recv(256)
         s.close()
         if b"250" in resp:
-            print("[TOR] ✅ New circuit requested — fresh IP incoming!", flush=True)
+            print("[TOR] âœ… New circuit requested â€” fresh IP incoming!", flush=True)
             time.sleep(5)
             return True
         else:
@@ -101,9 +101,9 @@ def renew_tor_circuit():
         print(f"[TOR] Circuit renewal error: {e}", flush=True)
         return False
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #  OVERLAY REMOVAL HELPER
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 def remove_overlays(page):
     """Strip ad iframes and consent dialogs that can intercept clicks (2026 DOM)."""
     try:
@@ -114,7 +114,7 @@ def remove_overlays(page):
             document.querySelectorAll('[style*="position: fixed"], [style*="position: absolute"]').forEach(el => {
                 if (el.style.zIndex && parseInt(el.style.zIndex) > 9000) {
                     // Don't nuke captcha elements or their containers
-                    if (el.querySelector('#captchatoken, input[name*="captcha"], #captcha-img') ||
+                    if (el.querySelector('#captcha-img, input[name*="captcha"]') ||
                         el.closest('.wrapper-capth, .captcha-container, form')) return;
                     el.remove();
                 }
@@ -126,9 +126,9 @@ def remove_overlays(page):
     except:
         pass
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #  ANTI-DETECTION SCRIPTS
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 DISMISS_ALERTS_JS = "window.alert = function() { return true; }; window.confirm = function() { return true; };"
 
 BLOCK_FC_POPUPS_JS = """(() => {
@@ -217,13 +217,13 @@ def inject_anti_detection(page):
 
 HEARTS_BTN_SEL = "button.wbutton.btn-dark"
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #  SERVICES
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 SERVICES = {
     "hearts": {
         "name": "Hearts",
-        "emoji": "❤️",
+        "emoji": "â¤ï¸",
         "button_class": "t-hearts-button",
         "menu_class": "t-hearts-menu",
         "unit": "hearts",
@@ -231,7 +231,7 @@ SERVICES = {
     },
     "views": {
         "name": "Views",
-        "emoji": "👁️",
+        "emoji": "ðŸ‘ï¸",
         "button_class": "t-views-button",
         "menu_class": "t-views-menu",
         "unit": "views",
@@ -239,7 +239,7 @@ SERVICES = {
     },
     "comment_hearts": {
         "name": "Comment Hearts",
-        "emoji": "💬",
+        "emoji": "ðŸ’¬",
         "button_class": "t-chearts-button",
         "menu_class": "t-chearts-menu",
         "unit": "hearts",
@@ -247,7 +247,7 @@ SERVICES = {
     },
     "shares": {
         "name": "Shares",
-        "emoji": "🔄",
+        "emoji": "ðŸ”„",
         "button_class": "t-shares-button",
         "menu_class": "t-shares-menu",
         "unit": "shares",
@@ -255,7 +255,7 @@ SERVICES = {
     },
     "favorites": {
         "name": "Favorites",
-        "emoji": "⭐",
+        "emoji": "â­",
         "button_class": "t-favorites-button",
         "menu_class": "t-favorites-menu",
         "unit": "favorites",
@@ -263,7 +263,7 @@ SERVICES = {
     },
     "followers": {
         "name": "Followers",
-        "emoji": "👥",
+        "emoji": "ðŸ‘¥",
         "button_class": "t-followers-button",
         "menu_class": "t-followers-menu",
         "unit": "followers",
@@ -273,9 +273,9 @@ SERVICES = {
 
 ANY_SERVICE_BUTTON = ", ".join(f".{s['button_class']}" for s in SERVICES.values() if 'button_class' in s)
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #  DICTIONARY
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 WORD_LIST = []
 def load_dictionary():
     global WORD_LIST
@@ -295,9 +295,9 @@ def load_dictionary():
 
 threading.Thread(target=load_dictionary, daemon=True).start()
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #  CAPTCHA SOLVER
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 def remove_small_components(binary_arr, min_size=30):
     h, w = binary_arr.shape
     visited = np.zeros((h, w), dtype=bool)
@@ -433,7 +433,7 @@ def _solve_captcha_inner(img_bytes):
                     best_match = matches[0]
                     best_raw = candidate
         if best_match:
-            print(f"[BOT] OCR: '{best_raw}' → '{best_match}' (score={best_score:.2f})", flush=True)
+            print(f"[BOT] OCR: '{best_raw}' â†’ '{best_match}' (score={best_score:.2f})", flush=True)
             return best_match
 
     most_common = Counter(results).most_common(1)[0][0]
@@ -510,9 +510,9 @@ def resolve_comment_link(url):
         print(f"[BOT] Comment link resolution failed: {e}", flush=True)
         return None
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #  LIVE VIDEO STREAMING
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 class FrameBuffer:
     def __init__(self, max_frames=20):
         self.buffer = deque(maxlen=max_frames)
@@ -593,9 +593,9 @@ class Session:
 sessions = {}
 sessions_lock = threading.Lock()
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #  BOT LOOP
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 def capture_screenshot(page, quality=60, max_width=1280):
     try:
         screenshot_bytes = page.screenshot(type='jpeg', quality=quality)
@@ -636,10 +636,10 @@ def run_session(session):
     svc_name = session.svc["name"]
     nt = session.num_tabs
     if nt <= 1:
-        session.log(f"🚀 Launching browser ({svc_name} mode)...")
+        session.log(f"ðŸš€ Launching browser ({svc_name} mode)...")
         run_tab(session, 0)
     else:
-        session.log(f"🚀 Launching {nt} tabs ({svc_name} mode)...")
+        session.log(f"ðŸš€ Launching {nt} tabs ({svc_name} mode)...")
         threads = []
         for tab_id in range(nt):
             t = threading.Thread(target=run_tab, args=(session, tab_id), daemon=True)
@@ -649,7 +649,7 @@ def run_session(session):
         for t in threads:
             t.join()
     if session.status == "running":
-        session.log("🛑 Session stopped.")
+        session.log("ðŸ›‘ Session stopped.")
         session.status = "stopped"
 
 def run_tab(session, tab_id):
@@ -679,6 +679,9 @@ def run_tab(session, tab_id):
             if remaining > 0:
                 _time.sleep(min(0.5, remaining))
 
+    # Stuck-loop detector
+    session._consecutive_no_response = 0
+
     import gc
     svc = session.svc
     svc_name = svc["name"]
@@ -703,29 +706,32 @@ def run_tab(session, tab_id):
                 return
             if full_restart > 0:
                 wait_time = min(int(backoff), 30)
-                session.log(f"🔄 Full restart #{full_restart} (waiting {wait_time}s)...")
+                session.log(f"ðŸ”„ Full restart #{full_restart} (waiting {wait_time}s)...")
                 z_sleep(wait_time)
                 backoff = min(backoff * 1.5, 30)
                 gc.collect()
                 if USING_TOR:
-                    session.log("🧅 Requesting fresh Tor IP...")
+                    session.log("ðŸ§… Requesting fresh Tor IP...")
                     renew_tor_circuit()
             else:
                 if multi:
-                    session.log(f"🚀 Starting tab...")
+                    session.log(f"ðŸš€ Starting tab...")
+
+            # Reset stuck-loop counter on restart
+            session._consecutive_no_response = 0
 
             browser = None
             page = None
             got_slot = False
             try:
                 if not _browser_semaphore.acquire(timeout=1):
-                    session.log(f"⏳ Waiting for browser slot (max {MAX_GLOBAL_BROWSERS} globally)...")
+                    session.log(f"â³ Waiting for browser slot (max {MAX_GLOBAL_BROWSERS} globally)...")
                     _browser_semaphore.acquire()
                 got_slot = True
                 with _active_browsers_lock:
                     global _active_browsers
                     _active_browsers += 1
-                    session.log(f"🟢 Browser slot acquired ({_active_browsers}/{MAX_GLOBAL_BROWSERS} in use)")
+                    session.log(f"ðŸŸ¢ Browser slot acquired ({_active_browsers}/{MAX_GLOBAL_BROWSERS} in use)")
             except Exception:
                 pass
 
@@ -749,17 +755,17 @@ def run_tab(session, tab_id):
                     if USING_TOR:
                         tor_port = 9050 + (tab_id % 10)
                         if full_restart == 0:
-                            session.log(f"🧅 Routing through Tor (port {tor_port})...")
+                            session.log(f"ðŸ§… Routing through Tor (port {tor_port})...")
                         for _tw in range(60):
                             if os.path.exists("/tmp/tor_ready"):
                                 break
                             if _tw == 0:
-                                session.log("⏳ Waiting for Tor to bootstrap...")
+                                session.log("â³ Waiting for Tor to bootstrap...")
                             z_sleep(1)
                         launch_opts["proxy"] = {"server": f"socks5://127.0.0.1:{tor_port}"}
                     elif PROXY_URL:
                         if full_restart == 0:
-                            session.log(f"🌐 Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
+                            session.log(f"ðŸŒ Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
                         launch_opts["proxy"] = {"server": PROXY_URL}
 
                     browser = p.chromium.launch(slow_mo=100, **launch_opts)
@@ -773,20 +779,20 @@ def run_tab(session, tab_id):
                         except:
                             return False
 
-                    session.log("🌐 Loading zefoy.com...")
+                    session.log("ðŸŒ Loading zefoy.com...")
                     try:
                         page.goto(ZEFOY, wait_until="domcontentloaded", timeout=60000)
                     except Exception as _goto_err:
-                        session.log(f"💥 Page crashed on load ({_goto_err}), restarting...")
+                        session.log(f"ðŸ’¥ Page crashed on load ({_goto_err}), restarting...")
                         continue
 
                     z_sleep(5)
                     inject_anti_detection(page)
                     if not safe_check(page):
-                        session.log("💥 Page crashed on load, restarting...")
+                        session.log("ðŸ’¥ Page crashed on load, restarting...")
                         continue
 
-                    session.log("🔐 Checking for captcha...")
+                    session.log("ðŸ” Checking for captcha...")
                     captcha_detected = False
                     page_ready = False
 
@@ -794,19 +800,19 @@ def run_tab(session, tab_id):
                         if session.stop_event.is_set():
                             return
                         if not safe_check(page):
-                            session.log("💥 Crashed during page check, restarting...")
+                            session.log("ðŸ’¥ Crashed during page check, restarting...")
                             break
                         try:
                             page_title = page.title().lower()
                             page_text = page.inner_text("body")[:200].lower()
                             if "502" in page_title or "502 bad gateway" in page_text:
-                                session.log(f"🔴 Zefoy is down (502 error), retrying ({page_attempt + 1}/10)...")
+                                session.log(f"ðŸ”´ Zefoy is down (502 error), retrying ({page_attempt + 1}/10)...")
                                 z_sleep(10 + page_attempt * 3)
                                 page.reload(wait_until="domcontentloaded")
                                 z_sleep(5)
                                 continue
                             if "503" in page_title or "cloudflare" in page_text or "just a moment" in page_text:
-                                session.log(f"🔴 Zefoy loading/Cloudflare check ({page_attempt + 1}/10)...")
+                                session.log(f"ðŸ”´ Zefoy loading/Cloudflare check ({page_attempt + 1}/10)...")
                                 z_sleep(10 + page_attempt * 3)
                                 page.reload(wait_until="domcontentloaded")
                                 z_sleep(5)
@@ -823,66 +829,66 @@ def run_tab(session, tab_id):
 
                         try:
                             page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=20000)
-                            session.log("✅ No captcha needed — service buttons already visible")
+                            session.log("âœ… No captcha needed â€” service buttons already visible")
                             page_ready = True
                             break
                         except:
                             pass
 
-                        session.log(f"⚠️ Page not ready, reloading (attempt {page_attempt + 1}/10)...")
+                        session.log(f"âš ï¸ Page not ready, reloading (attempt {page_attempt + 1}/10)...")
                         try:
                             page.reload(wait_until="domcontentloaded")
                         except Exception as _reload_err:
-                            session.log(f"⚠️ Error: {_reload_err} — restarting tab...")
+                            session.log(f"âš ï¸ Error: {_reload_err} â€” restarting tab...")
                             break
                         z_sleep(10 + page_attempt * 3)
                     else:
-                        session.log("⚠️ Page never became ready, restarting...")
+                        session.log("âš ï¸ Page never became ready, restarting...")
                         continue
 
                     if not captcha_detected and not page_ready:
                         continue
 
                     if captcha_detected:
-                        session.log(f"⏳ Waiting for a captcha-solving slot (max {CAPTCHA_CONCURRENCY} concurrent)...")
+                        session.log(f"â³ Waiting for a captcha-solving slot (max {CAPTCHA_CONCURRENCY} concurrent)...")
                         try:
                             _captcha_semaphore.acquire()
-                            session.log("🔐 Acquired captcha-solving slot, starting...")
+                            session.log("ðŸ” Acquired captcha-solving slot, starting...")
                             try:
                                 captcha_solved = False
                                 for captcha_attempt in range(20):
                                     if session.stop_event.is_set():
                                         return
                                     if not safe_check(page):
-                                        session.log("💥 Crashed during captcha, restarting...")
+                                        session.log("ðŸ’¥ Crashed during captcha, restarting...")
                                         break
                                     try:
                                         captcha_img = page.locator("#captcha-img, img[src*='CAPTCHA'], img[src*='captcha']")
                                         try:
                                             captcha_img.first.wait_for(state="visible", timeout=10000)
                                         except:
-                                            session.log("⚠️ Captcha image not loading, reloading page...")
+                                            session.log("âš ï¸ Captcha image not loading, reloading page...")
                                             page.reload(wait_until="domcontentloaded")
                                             z_sleep(5)
                                             continue
 
-                                        session.log(f"🔐 Solving captcha (attempt {captcha_attempt + 1})...")
+                                        session.log(f"ðŸ” Solving captcha (attempt {captcha_attempt + 1})...")
                                         z_sleep(2)
                                         captcha_bytes = captcha_img.first.screenshot()
                                         answer = solve_captcha(captcha_bytes)
 
                                         if not answer:
-                                            session.log("⚠️ OCR failed, refreshing captcha...")
+                                            session.log("âš ï¸ OCR failed, refreshing captcha...")
                                             try: page.locator(".refresh-capthca-btn-new, [onclick*='refresh'], .captcha-refresh").first.click()
                                             except: page.reload(wait_until="domcontentloaded")
                                             z_sleep(3)
                                             continue
 
-                                        session.log(f"🔤 Answer: '{answer}'")
+                                        session.log(f"ðŸ”¤ Answer: '{answer}'")
                                         remove_overlays(page)
                                         z_sleep(0.5)
 
-                                        # ═══ FIX: Real zefoy captcha input selectors ═══
+                                        # Real zefoy captcha input selectors (matches current DOM)
                                         captcha_input = page.locator(
                                             "input[name='captchalogin'],"
                                             " input.captcha-login-input,"
@@ -894,7 +900,7 @@ def run_tab(session, tab_id):
                                             try:
                                                 captcha_input.first.wait_for(state="attached", timeout=5000)
                                             except:
-                                                session.log("⚠️ Captcha input not in DOM, refreshing...")
+                                                session.log("âš ï¸ Captcha input not in DOM, refreshing...")
                                                 try:
                                                     page.locator(".refresh-capthca-btn-new").first.click()
                                                 except:
@@ -905,13 +911,13 @@ def run_tab(session, tab_id):
                                         try:
                                             captcha_input.first.fill(answer)
                                         except:
-                                            session.log("⚠️ fill() failed, typing via keyboard...")
+                                            session.log("âš ï¸ fill() failed, typing via keyboard...")
                                             try:
                                                 captcha_input.first.click()
                                                 z_sleep(0.2)
                                                 page.keyboard.type(answer, delay=80)
                                             except Exception as kb_err:
-                                                session.log(f"⚠️ Keyboard fallback also failed: {kb_err}")
+                                                session.log(f"âš ï¸ Keyboard fallback also failed: {kb_err}")
                                                 try:
                                                     page.locator(".refresh-capthca-btn-new").first.click()
                                                 except:
@@ -928,13 +934,13 @@ def run_tab(session, tab_id):
 
                                         try:
                                             page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=8000)
-                                            session.log("✅ Captcha solved!")
+                                            session.log("âœ… Captcha solved!")
                                             inject_anti_detection(page)
                                             captcha_solved = True
                                             break
                                         except:
-                                            session.log(f"❌ Wrong answer '{answer}', retrying...")
-                                            # ═══ FIX: Real zefoy error modal is #zbcd ═══
+                                            session.log(f"âŒ Wrong answer '{answer}', retrying...")
+                                            # Real zefoy error modal is #zbcd
                                             try:
                                                 page.locator("#zbcd .btn-secondary, #zbcd button[data-dismiss='modal'], .modal.show .btn-secondary").first.click()
                                             except: pass
@@ -945,22 +951,22 @@ def run_tab(session, tab_id):
 
                                     except Exception as e:
                                         if is_dead(e):
-                                            session.log("💥 Crashed during captcha, restarting...")
+                                            session.log("ðŸ’¥ Crashed during captcha, restarting...")
                                             break
                                         else:
-                                            session.log(f"⚠️ Captcha error: {e}")
+                                            session.log(f"âš ï¸ Captcha error: {e}")
                                         z_sleep(2)
 
                                 if not captcha_solved:
                                     continue
                             finally:
                                 _captcha_semaphore.release()
-                                session.log("🟢 Released captcha-solving slot")
+                                session.log("ðŸŸ¢ Released captcha-solving slot")
                         except Exception as e:
-                            session.log(f"❌ Captcha semaphore error: {e}")
+                            session.log(f"âŒ Captcha semaphore error: {e}")
                             continue
 
-                    # ── Click service button ──
+                    # â”€â”€ Click service button â”€â”€
                     session.log(f"{emoji} Looking for {svc_name} button...")
                     try:
                         page.locator(f".{btn_cls}").wait_for(timeout=30000)
@@ -968,11 +974,11 @@ def run_tab(session, tab_id):
                         try:
                             btn_el = page.locator(f".{btn_cls}")
                             if btn_el.count() > 0 and btn_el.get_attribute("disabled"):
-                                session.log(f"❌ {svc_name} is currently unavailable on Zefoy. Try a different service.")
+                                session.log(f"âŒ {svc_name} is currently unavailable on Zefoy. Try a different service.")
                             else:
-                                session.log(f"❌ {svc_name} button not found. Restarting...")
+                                session.log(f"âŒ {svc_name} button not found. Restarting...")
                         except:
-                            session.log(f"❌ {svc_name} button not found. Restarting...")
+                            session.log(f"âŒ {svc_name} button not found. Restarting...")
                         continue
 
                     try:
@@ -989,33 +995,33 @@ def run_tab(session, tab_id):
                             btn_element.click(force=True, timeout=10000)
                     except Exception as btn_err:
                         if is_dead(btn_err):
-                            session.log(f"💥 Crashed clicking {svc_name} button, restarting...")
+                            session.log(f"ðŸ’¥ Crashed clicking {svc_name} button, restarting...")
                             continue
-                        session.log(f"⚠️ Error clicking button: {btn_err}, restarting...")
+                        session.log(f"âš ï¸ Error clicking button: {btn_err}, restarting...")
                         continue
 
                     z_sleep(2)
                     inject_anti_detection(page)
-                    session.log(f"✅ {svc_name} panel opened!")
+                    session.log(f"âœ… {svc_name} panel opened!")
                     backoff = 5
                     url_filled = False
                     input_fail_count = 0
                     MAX_INPUT_FAILS = 5
 
-                    # ── Main loop ──
+                    # â”€â”€ Main loop â”€â”€
                     while not session.stop_event.is_set():
                         if not safe_check(page):
-                            session.log("💥 Page crashed in main loop, restarting...")
+                            session.log("ðŸ’¥ Page crashed in main loop, restarting...")
                             break
                         cycle = session.add_cycle()
-                        session.log(f"🔄 Cycle {cycle}")
+                        session.log(f"ðŸ”„ Cycle {cycle}")
                         try:
                             url_input = page.locator(input_panel_sel).first
                             try:
                                 url_input.wait_for(state="visible", timeout=5000)
                                 input_fail_count = 0
                             except:
-                                session.log(f"⚠️ Input not visible, re-opening {svc_name} panel...")
+                                session.log(f"âš ï¸ Input not visible, re-opening {svc_name} panel...")
                                 try:
                                     remove_overlays(page)
                                     z_sleep(0.3)
@@ -1030,18 +1036,18 @@ def run_tab(session, tab_id):
                                     try:
                                         body_snip = page.inner_text("body")[:300].lower()
                                     except:
-                                        session.log("💥 Page unreadable, restarting browser...")
+                                        session.log("ðŸ’¥ Page unreadable, restarting browser...")
                                         break
                                     if "502" in body_snip or "bad gateway" in body_snip or "503" in body_snip:
-                                        session.log("🔴 Zefoy is down (502/503), restarting browser...")
+                                        session.log("ðŸ”´ Zefoy is down (502/503), restarting browser...")
                                         break
                                     if page.locator("#captcha-img, img[src*='captcha'], img[src*='CAPTCHA']").count() > 0:
-                                        session.log("🔐 Session expired (captcha shown again), restarting browser...")
+                                        session.log("ðŸ” Session expired (captcha shown again), restarting browser...")
                                         break
                                     if input_fail_count >= MAX_INPUT_FAILS:
-                                        session.log(f"❌ Input not found after {MAX_INPUT_FAILS} attempts, restarting browser...")
+                                        session.log(f"âŒ Input not found after {MAX_INPUT_FAILS} attempts, restarting browser...")
                                         break
-                                    session.log(f"⚠️ Still can't find input after re-open, retrying ({input_fail_count}/{MAX_INPUT_FAILS})...")
+                                    session.log(f"âš ï¸ Still can't find input after re-open, retrying ({input_fail_count}/{MAX_INPUT_FAILS})...")
                                     z_sleep(3)
                                     continue
                                 url_filled = False
@@ -1052,7 +1058,7 @@ def run_tab(session, tab_id):
                                 url_input.fill(session.video_url)
                                 z_sleep(1)
                                 url_filled = True
-                                session.log(f"✅ URL filled")
+                                session.log(f"âœ… URL filled")
 
                             submit_sel = submit_panel_sel
                             remove_overlays(page)
@@ -1062,22 +1068,22 @@ def run_tab(session, tab_id):
 
                         except Exception as fill_err:
                             if is_dead(fill_err):
-                                session.log("💥 Crashed filling URL, restarting...")
+                                session.log("ðŸ’¥ Crashed filling URL, restarting...")
                                 break
-                            session.log(f"⚠️ Error: {fill_err}")
+                            session.log(f"âš ï¸ Error: {fill_err}")
                             z_sleep(3)
                             continue
 
-                        # ── Comment Hearts ──
+                        # â”€â”€ Comment Hearts â”€â”€
                         if session.service == "comment_hearts":
                             target_user = session.username.lstrip('@').lower()
                             try:
                                 body_check = page.inner_text("body").lower()
                             except:
-                                session.log("💥 Page crash, restarting...")
+                                session.log("ðŸ’¥ Page crash, restarting...")
                                 break
                             if "too many" in body_check or "slow down" in body_check:
-                                session.log("⚠️ Too many requests, clicking Search...")
+                                session.log("âš ï¸ Too many requests, clicking Search...")
                                 try:
                                     remove_overlays(page)
                                     z_sleep(0.3)
@@ -1091,17 +1097,17 @@ def run_tab(session, tab_id):
                                 if wait_secs <= 0:
                                     wait_secs = 60
                                 wait_secs += 3
-                                session.log(f"⏳ Countdown: {wait_secs}s")
+                                session.log(f"â³ Countdown: {wait_secs}s")
                                 for remaining in range(wait_secs, 0, -1):
                                     if session.stop_event.is_set():
                                         break
                                     mins = remaining // 60
                                     secs = remaining % 60
                                     time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
-                                    session.set_countdown(f"⏳ {time_str}")
+                                    session.set_countdown(f"â³ {time_str}")
                                     z_sleep(1)
                                 session.set_countdown("")
-                                session.log("✅ Countdown done — clicking Search...")
+                                session.log("âœ… Countdown done â€” clicking Search...")
                                 try:
                                     remove_overlays(page)
                                     z_sleep(0.3)
@@ -1111,7 +1117,7 @@ def run_tab(session, tab_id):
                                 z_sleep(3)
                                 continue
                             if page.locator(".kadi-rengi").count() > 0:
-                                session.log("💬 Comments already visible")
+                                session.log("ðŸ’¬ Comments already visible")
                             else:
                                 try:
                                     count_btn = page.locator(f"{HEARTS_BTN_SEL}:visible, button.wbutton:visible").first
@@ -1120,13 +1126,13 @@ def run_tab(session, tab_id):
                                     z_sleep(0.3)
                                     count_btn.click()
                                     z_sleep(4)
-                                    session.log("💬 Comments loaded")
+                                    session.log("ðŸ’¬ Comments loaded")
                                 except:
                                     try:
                                         snippet = page.inner_text("body")[:150]
-                                        session.log(f"⚠️ 💬 button not found. Panel: {snippet}")
+                                        session.log(f"âš ï¸ ðŸ’¬ button not found. Panel: {snippet}")
                                     except:
-                                        session.log("⚠️ 💬 button not found, panel unreadable")
+                                        session.log("âš ï¸ ðŸ’¬ button not found, panel unreadable")
                                     try:
                                         remove_overlays(page)
                                         z_sleep(0.3)
@@ -1167,25 +1173,25 @@ def run_tab(session, tab_id):
                                         remove_overlays(page)
                                         z_sleep(0.3)
                                         form_loc.locator("button[type='submit']").click()
-                                        session.log(f"💬 Sent 100 hearts to @{target_user} (page {pg + 1})")
+                                        session.log(f"ðŸ’¬ Sent 100 hearts to @{target_user} (page {pg + 1})")
                                         found_user = True
                                         z_sleep(3)
                                         break
                                     if result.get('hasNext'):
                                         if pg == 0:
-                                            session.log(f"🔍 @{target_user} not on page 1, paginating...")
+                                            session.log(f"ðŸ” @{target_user} not on page 1, paginating...")
                                         page.locator('li[title="Next"] button').click()
                                         z_sleep(4)
                                     else:
                                         total_scanned = (pg * 40) + result.get('total', 0)
-                                        session.log(f"❌ @{target_user} not found in {total_scanned} comments ({pg + 1} pages)")
+                                        session.log(f"âŒ @{target_user} not found in {total_scanned} comments ({pg + 1} pages)")
                                         break
                                 except Exception as ce:
                                     if is_dead(ce):
                                         crashed = True
-                                        session.log("💥 Crashed during pagination, restarting...")
+                                        session.log("ðŸ’¥ Crashed during pagination, restarting...")
                                         break
-                                    session.log(f"⚠️ Pagination error: {ce}")
+                                    session.log(f"âš ï¸ Pagination error: {ce}")
                                     break
 
                             if crashed:
@@ -1207,9 +1213,9 @@ def run_tab(session, tab_id):
                                 break
                             if "successfully" in body:
                                 session.add_count(100)
-                                session.log(f"💬 +100 hearts to @{target_user} (total: {session.total_count})")
+                                session.log(f"ðŸ’¬ +100 hearts to @{target_user} (total: {session.total_count})")
                             elif "too many" in body or "slow down" in body:
-                                session.log("⚠️ Too many requests")
+                                session.log("âš ï¸ Too many requests")
                             z_sleep(2)
                             try:
                                 remove_overlays(page)
@@ -1220,9 +1226,11 @@ def run_tab(session, tab_id):
                             z_sleep(3)
                             continue
 
-                        # ── Response handler ──
+                        # â”€â”€ Response handler with stuck-loop detection â”€â”€
                         max_checks = 60
                         crashed = False
+                        cycle_succeeded = False
+
                         for check_i in range(max_checks):
                             if session.stop_event.is_set():
                                 break
@@ -1234,10 +1242,12 @@ def run_tab(session, tab_id):
                                     break
                                 z_sleep(1)
                                 continue
+
                             lower_body = body.lower()
 
+                            # Too many requests
                             if "too many" in lower_body or "slow down" in lower_body:
-                                session.log("⚠️ Too many requests — clicking Search again...")
+                                session.log("âš ï¸ Too many requests â€” clicking Search again...")
                                 z_sleep(2)
                                 try:
                                     submit_sel = submit_panel_sel
@@ -1249,22 +1259,23 @@ def run_tab(session, tab_id):
                                     pass
                                 continue
 
+                            # Countdown / rate limit
                             if ("please wait" in lower_body and ("minute" in lower_body or "second" in lower_body)):
                                 wait_secs = parse_wait_time(body)
                                 if wait_secs <= 0:
                                     wait_secs = 60
                                 wait_secs += 3
-                                session.log(f"⏳ Countdown: {wait_secs}s")
+                                session.log(f"â³ Countdown: {wait_secs}s")
                                 for remaining in range(wait_secs, 0, -1):
                                     if session.stop_event.is_set():
                                         break
                                     mins = remaining // 60
                                     secs = remaining % 60
                                     time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
-                                    session.set_countdown(f"⏳ {time_str}")
+                                    session.set_countdown(f"â³ {time_str}")
                                     z_sleep(1)
                                 session.set_countdown("")
-                                session.log("✅ Countdown done — clicking Search 2x...")
+                                session.log("âœ… Countdown done â€” clicking Search 2x...")
                                 try:
                                     submit_sel = submit_panel_sel
                                     remove_overlays(page)
@@ -1277,8 +1288,9 @@ def run_tab(session, tab_id):
                                     pass
                                 continue
 
+                            # Ready
                             if "ready" in lower_body and "next submit" in lower_body:
-                                session.log("✅ Ready — clicking Search...")
+                                session.log("âœ… Ready â€” clicking Search...")
                                 try:
                                     submit_sel = submit_panel_sel
                                     remove_overlays(page)
@@ -1289,11 +1301,12 @@ def run_tab(session, tab_id):
                                     pass
                                 continue
 
+                            # Success
                             if "successfully" in lower_body:
                                 count = 0
                                 for line in body.split('\n'):
                                     if 'successfully' in line.lower():
-                                        session.log(f"📝 Raw: {line.strip()[:120]}")
+                                        session.log(f"ðŸ“ Raw: {line.strip()[:120]}")
                                         try:
                                             nums = [int(m) for m in re.findall(r'\d+', line) if not (2020 <= int(m) <= 2035) and int(m) < 100000]
                                         except:
@@ -1303,11 +1316,14 @@ def run_tab(session, tab_id):
                                         break
                                 new_total = session.add_count(count)
                                 if count > 0:
-                                    session.log(f"🎉 +{count} {unit}! Total: {new_total:,}")
+                                    session.log(f"ðŸŽ‰ +{count} {unit}! Total: {new_total:,}")
                                 else:
-                                    session.log(f"✅ Success (count not captured). Total: {new_total:,}")
+                                    session.log(f"âœ… Success (count not captured). Total: {new_total:,}")
+                                session._consecutive_no_response = 0
+                                cycle_succeeded = True
                                 break
 
+                            # Send button visible
                             send_clicked = False
                             try:
                                 remove_overlays(page)
@@ -1350,30 +1366,64 @@ def run_tab(session, tab_id):
                                         session.log(f"{emoji} Clicked send button (JS fallback)!")
                                         z_sleep(3)
                                 if send_clicked:
+                                    session._consecutive_no_response = 0
+                                    cycle_succeeded = True
                                     continue
                             except:
                                 pass
 
+                            # Still loading / waiting
                             if check_i < 30:
                                 z_sleep(1)
                                 continue
                             else:
-                                session.log(f"⚠️ No response after {check_i}s, breaking to retry...")
+                                # â”€â”€ Stuck-loop detection â”€â”€
+                                session._consecutive_no_response += 1
+                                streak = session._consecutive_no_response
+
+                                if streak >= 3:
+                                    # Dump page state for debugging
+                                    try:
+                                        page_snippet = page.inner_text("body")[:400]
+                                        session.log(f"ðŸ” Page stuck (streak {streak}). Body: {page_snippet}")
+                                    except:
+                                        session.log(f"ðŸ” Page stuck (streak {streak}). Cannot read body.")
+
+                                    # Check if captcha reappeared
+                                    try:
+                                        if page.locator("#captcha-img, img[src*='captcha']").count() > 0:
+                                            session.log("ðŸ” Captcha reappeared, restarting browser...")
+                                            break
+                                    except:
+                                        pass
+
+                                    # Check for error state
+                                    if "error" in lower_body or "invalid" in lower_body:
+                                        session.log("âŒ Page showing error, restarting browser...")
+                                        break
+
+                                    # Force restart after 5 consecutive no-response
+                                    if streak >= 5:
+                                        session.log(f"ðŸ’¥ Stuck for {streak} cycles, forcing browser restart...")
+                                        break
+
+                                session.log(f"âš ï¸ No response after {check_i}s (streak: {streak}), retrying...")
                                 break
 
                         if crashed:
-                            session.log("💥 Crashed in main loop, restarting tab...")
+                            session.log("ðŸ’¥ Crashed in main loop, restarting tab...")
                             break
+
                         z_sleep(2)
                         if cycle % 10 == 0:
                             gc.collect()
 
             except Exception as inner_err:
                 if is_dead(inner_err):
-                    session.log(f"💥 Browser crashed, restarting tab...")
+                    session.log(f"ðŸ’¥ Browser crashed, restarting tab...")
                 else:
                     import traceback
-                    session.log(f"⚠️ Error: {inner_err} — restarting tab...")
+                    session.log(f"âš ï¸ Error: {inner_err} â€” restarting tab...")
                     traceback.print_exc()
             finally:
                 try:
@@ -1388,9 +1438,9 @@ def run_tab(session, tab_id):
                     got_slot = False
                 gc.collect()
 
-        session.log("🛑 Tab exhausted all restart attempts.")
+        session.log("ðŸ›‘ Tab exhausted all restart attempts.")
     except Exception as e:
-        session.log(f"❌ Fatal error: {e}")
+        session.log(f"âŒ Fatal error: {e}")
         import traceback
         traceback.print_exc()
     finally:
@@ -1399,9 +1449,9 @@ def run_tab(session, tab_id):
             if session.active_tabs <= 0 and session.status == "running":
                 session.status = "error"
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #  ROUTES
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 @app.route("/")
 def index():
     return render_template("index.html")
