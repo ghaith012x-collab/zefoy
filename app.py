@@ -23,6 +23,18 @@ def _is_dead(e):
 _tab_prefix = threading.local()
 
 # ═══════════════════════════════════════════════════════════════
+#  LIVE SCREENSHOT HELPER
+# ═══════════════════════════════════════════════════════════════
+
+def save_live_screenshot(page, filename="live.png"):
+    """Save screenshot for live preview on frontend"""
+    try:
+        os.makedirs("static", exist_ok=True)
+        page.screenshot(path=f"static/{filename}")
+    except:
+        pass  # Ignore screenshot errors
+
+# ═══════════════════════════════════════════════════════════════
 #  CONCURRENCY LIMITS
 # ═══════════════════════════════════════════════════════════════
 
@@ -939,9 +951,35 @@ def run_tab(session, tab_id):
                                         remove_overlays(page)
                                         time.sleep(0.5)
                                         
-                                        captcha_input = page.locator("#captchatoken, input[name='captcha_secure'], input[placeholder*='aptcha' i]")
-                                        captcha_input.first.fill(answer)
-                                        time.sleep(0.5)
+                                        # Try multiple captcha input selectors with fallback
+                                        captcha_input = None
+                                        selectors = [
+                                            "#captchatoken",
+                                            "input[name='captcha_secure']",
+                                            "input[placeholder*='aptcha' i]",
+                                            "input[placeholder*='answer' i]",
+                                            "form input[type='text']:nth-child(1)",
+                                            ".captcha-input",
+                                            "input.form-control[name*='captcha']"
+                                        ]
+                                        
+                                        for selector in selectors:
+                                            try:
+                                                test_input = page.locator(selector).first
+                                                test_input.wait_for(state="visible", timeout=3000)
+                                                captcha_input = test_input
+                                                session.log(f"✓ Found captcha input: {selector}")
+                                                break
+                                            except:
+                                                continue
+                                        
+                                        if captcha_input:
+                                            captcha_input.fill(answer)
+                                            time.sleep(0.5)
+                                        else:
+                                            session.log(f"⚠️ Could not find captcha input, taking screenshot for debug...")
+                                            page.screenshot(path="static/captcha_debug.png")
+                                            continue
                                         
                                         # Remove overlays before clicking submit
                                         remove_overlays(page)
@@ -953,6 +991,7 @@ def run_tab(session, tab_id):
                                         try:
                                             page.locator(ANY_SERVICE_BUTTON).first.wait_for(timeout=8000)
                                             session.log("\u2705 Captcha solved!")
+                                            save_live_screenshot(page)
                                             inject_anti_detection(page)
                                             captcha_solved = True
                                             break
@@ -1087,6 +1126,7 @@ def run_tab(session, tab_id):
                                 time.sleep(1)
                                 url_filled = True
                                 session.log(f"✅ URL filled")
+                                save_live_screenshot(page)
 
                             # Click Search (with overlay removal) — panel-scoped
                             submit_sel = submit_panel_sel
@@ -1094,6 +1134,7 @@ def run_tab(session, tab_id):
                             time.sleep(0.3)
                             page.locator(submit_sel).first.click()
                             time.sleep(3)
+                            save_live_screenshot(page)
                         except Exception as fill_err:
                             if _is_dead(fill_err):
                                 session.log("💥 Crashed filling URL, restarting...")
@@ -1162,6 +1203,7 @@ def run_tab(session, tab_id):
                                     time.sleep(0.3)
                                     count_btn.click()
                                     time.sleep(4)
+                                    save_live_screenshot(page)
                                     session.log("💬 Comments loaded")
                                 except:
                                     try:
@@ -1385,6 +1427,7 @@ def run_tab(session, tab_id):
                                             send_clicked = True
                                             session.log(f"{emoji} Clicked send button!")
                                             time.sleep(3)
+                                            save_live_screenshot(page)
                                             break
                                     except:
                                         continue
@@ -1617,6 +1660,18 @@ def stream_all():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+@app.route("/api/live-screenshot")
+def get_live_screenshot():
+    """Serve the latest screenshot for live preview on the frontend"""
+    import os
+    screenshot_path = "static/live.png"
+    if os.path.exists(screenshot_path):
+        return send_file(screenshot_path, mimetype='image/png')
+    else:
+        # Return empty/placeholder if no screenshot yet
+        return jsonify({"error": "No screenshot available yet"}), 404
 
 
 @app.route("/remove/<int:sid>", methods=["POST"])
