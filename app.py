@@ -23,12 +23,12 @@ def is_dead(e):
 _tab_prefix = threading.local()
 
 # ════════════════════════════════════════════════════════════════════════
-#  CONCURRENCY LIMITS (Optimized to prevent crashes)
+#  CONCURRENCY LIMITS (Increased to 9, with staggering to prevent crashes)
 # ════════════════════════════════════════════════════════════════════════
 CAPTCHA_CONCURRENCY = int(os.environ.get("CAPTCHA_CONCURRENCY", "2"))
 _captcha_semaphore = threading.Semaphore(CAPTCHA_CONCURRENCY)
 _ocr_semaphore = threading.Semaphore(CAPTCHA_CONCURRENCY)
-MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_GLOBAL_BROWSERS", "4"))
+MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_GLOBAL_BROWSERS", "9"))
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
 _active_browsers_lock = threading.Lock()
@@ -324,6 +324,8 @@ def remove_small_components(binary_arr, min_size=30):
 
 def solve_captcha(img_bytes):
     with _ocr_semaphore:
+        # Give the CPU a 1-second breather before starting heavy OCR
+        time.sleep(1)
         return _solve_captcha_inner(img_bytes)
 
 def _solve_captcha_inner(img_bytes):
@@ -613,34 +615,35 @@ def capture_screenshot(page, quality=60, max_width=1280):
         print(f"[VIDEO] Screenshot error: {e}", flush=True)
         return None
 
-def generate_mjpeg_stream(frame_buffer, fps=2):
+def generate_mjpeg_stream(frame_buffer, fps=1):
     frame_interval = 1.0 / fps
     last_frame_time = time.time()
     while True:
         current_time = time.time()
         if current_time - last_frame_time < frame_interval:
-            time.sleep(0.01)
+            time.sleep(0.1) # Check less frequently to save CPU
             continue
         frame_data = frame_buffer.get_latest()
         if frame_data is None:
-            time.sleep(0.05)
+            time.sleep(0.5)
             continue
         yield (b'--FRAME\r\n'
                b'Content-Type: image/jpeg\r\n'
                b'Content-Length: ' + str(len(frame_data)).encode() + b'\r\n'
                b'\r\n' + frame_data + b'\r\n')
         last_frame_time = current_time
-        time.sleep(0.01)
+        # Extra 1 second breather as requested to prevent "Application did not respond"
+        time.sleep(1)
 
 def run_session(session):
     session.status = "running"
     svc_name = session.svc["name"]
     nt = session.num_tabs
     if nt <= 1:
-        session.log(f"ðŸš€ Launching browser ({svc_name} mode)...")
+        session.log(f"🚀 Launching browser ({svc_name} mode)...")
         run_tab(session, 0)
     else:
-        session.log(f"ðŸš€ Launching {nt} tabs ({svc_name} mode)...")
+        session.log(f"🚀 Launching {nt} tabs ({svc_name} mode)...")
         threads = []
         for tab_id in range(nt):
             t = threading.Thread(target=run_tab, args=(session, tab_id), daemon=True)
@@ -707,16 +710,16 @@ def run_tab(session, tab_id):
                 return
             if full_restart > 0:
                 wait_time = min(int(backoff), 30)
-                session.log(f"ðŸ”„ Full restart #{full_restart} (waiting {wait_time}s)...")
+                session.log(f"🔄 Full restart #{full_restart} (waiting {wait_time}s)...")
                 z_sleep(wait_time)
                 backoff = min(backoff * 1.5, 30)
                 gc.collect()
                 if USING_TOR:
-                    session.log("ðŸ§… Requesting fresh Tor IP...")
+                    session.log("👵 Requesting fresh Tor IP...")
                     renew_tor_circuit()
             else:
                 if multi:
-                    session.log(f"ðŸš€ Starting tab...")
+                    session.log(f"🚀 Starting tab...")
 
             # Reset stuck-loop counter on restart
             session._consecutive_no_response = 0
@@ -726,13 +729,15 @@ def run_tab(session, tab_id):
             got_slot = False
             try:
                 if not _browser_semaphore.acquire(timeout=1):
-                    session.log(f"â³ Waiting for browser slot (max {MAX_GLOBAL_BROWSERS} globally)...")
+                    session.log(f"⌛ Waiting for browser slot (max {MAX_GLOBAL_BROWSERS} globally)...")
                     _browser_semaphore.acquire()
                 got_slot = True
+                # Staggered launch: wait 2 seconds after acquiring slot to avoid CPU spikes
+                time.sleep(2)
                 with _active_browsers_lock:
                     global _active_browsers
                     _active_browsers += 1
-                    session.log(f"ðŸŸ¢ Browser slot acquired ({_active_browsers}/{MAX_GLOBAL_BROWSERS} in use)")
+                    session.log(f"🟢 Browser slot acquired ({_active_browsers}/{MAX_GLOBAL_BROWSERS} in use)")
             except Exception:
                 pass
 
