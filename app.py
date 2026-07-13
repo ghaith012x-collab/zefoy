@@ -1,6 +1,7 @@
+# -*- coding: utf-8 -*-
 from flask import Flask, render_template, request, jsonify, Response
 from playwright.sync_api import sync_playwright
-import threading, time, re, sys, difflib, json, base64, os, resource
+import threading, time, re, sys, difflib, json, base64, os, resource, gc
 from PIL import Image, ImageOps
 from io import BytesIO
 from collections import Counter, deque
@@ -21,13 +22,13 @@ def is_dead(e):
 
 _tab_prefix = threading.local()
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-#  CONCURRENCY LIMITS
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-CAPTCHA_CONCURRENCY = int(os.environ.get("CAPTCHA_CONCURRENCY", "3"))
+# ════════════════════════════════════════════════════════════════════════
+#  CONCURRENCY LIMITS (Optimized to prevent crashes)
+# ════════════════════════════════════════════════════════════════════════
+CAPTCHA_CONCURRENCY = int(os.environ.get("CAPTCHA_CONCURRENCY", "2"))
 _captcha_semaphore = threading.Semaphore(CAPTCHA_CONCURRENCY)
 _ocr_semaphore = threading.Semaphore(CAPTCHA_CONCURRENCY)
-MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_GLOBAL_BROWSERS", "12"))
+MAX_GLOBAL_BROWSERS = int(os.environ.get("MAX_GLOBAL_BROWSERS", "4"))
 _browser_semaphore = threading.Semaphore(MAX_GLOBAL_BROWSERS)
 _active_browsers = 0
 _active_browsers_lock = threading.Lock()
@@ -101,9 +102,9 @@ def renew_tor_circuit():
         print(f"[TOR] Circuit renewal error: {e}", flush=True)
         return False
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ════════════════════════════════════════════════════════════════════════
 #  OVERLAY REMOVAL HELPER
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ════════════════════════════════════════════════════════════════════════
 def remove_overlays(page):
     """Strip ad iframes and consent dialogs that can intercept clicks (2026 DOM)."""
     try:
@@ -126,9 +127,9 @@ def remove_overlays(page):
     except:
         pass
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ════════════════════════════════════════════════════════════════════════
 #  ANTI-DETECTION SCRIPTS
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ════════════════════════════════════════════════════════════════════════
 DISMISS_ALERTS_JS = "window.alert = function() { return true; }; window.confirm = function() { return true; };"
 
 BLOCK_FC_POPUPS_JS = """(() => {
@@ -217,13 +218,13 @@ def inject_anti_detection(page):
 
 HEARTS_BTN_SEL = "button.wbutton.btn-dark"
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ════════════════════════════════════════════════════════════════════════
 #  SERVICES
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ════════════════════════════════════════════════════════════════════════
 SERVICES = {
     "hearts": {
         "name": "Hearts",
-        "emoji": "â¤ï¸",
+        "emoji": "❤️",
         "button_class": "t-hearts-button",
         "menu_class": "t-hearts-menu",
         "unit": "hearts",
@@ -231,7 +232,7 @@ SERVICES = {
     },
     "views": {
         "name": "Views",
-        "emoji": "ðŸ‘ï¸",
+        "emoji": "👁️",
         "button_class": "t-views-button",
         "menu_class": "t-views-menu",
         "unit": "views",
@@ -239,7 +240,7 @@ SERVICES = {
     },
     "comment_hearts": {
         "name": "Comment Hearts",
-        "emoji": "ðŸ’¬",
+        "emoji": "💬",
         "button_class": "t-chearts-button",
         "menu_class": "t-chearts-menu",
         "unit": "hearts",
@@ -247,7 +248,7 @@ SERVICES = {
     },
     "shares": {
         "name": "Shares",
-        "emoji": "ðŸ”„",
+        "emoji": "🔄",
         "button_class": "t-shares-button",
         "menu_class": "t-shares-menu",
         "unit": "shares",
@@ -255,7 +256,7 @@ SERVICES = {
     },
     "favorites": {
         "name": "Favorites",
-        "emoji": "â­",
+        "emoji": "⭐",
         "button_class": "t-favorites-button",
         "menu_class": "t-favorites-menu",
         "unit": "favorites",
@@ -263,7 +264,7 @@ SERVICES = {
     },
     "followers": {
         "name": "Followers",
-        "emoji": "ðŸ‘¥",
+        "emoji": "👥",
         "button_class": "t-followers-button",
         "menu_class": "t-followers-menu",
         "unit": "followers",
@@ -273,9 +274,9 @@ SERVICES = {
 
 ANY_SERVICE_BUTTON = ", ".join(f".{s['button_class']}" for s in SERVICES.values() if 'button_class' in s)
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ════════════════════════════════════════════════════════════════════════
 #  DICTIONARY
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ════════════════════════════════════════════════════════════════════════
 WORD_LIST = []
 def load_dictionary():
     global WORD_LIST
@@ -1053,12 +1054,20 @@ def run_tab(session, tab_id):
                                 url_filled = False
 
                             if not url_filled:
-                                url_input.fill("")
+                                url_input.click()
                                 z_sleep(0.3)
-                                url_input.fill(session.video_url)
+                                # Clear and fill using JavaScript to ensure 100% accuracy
+                                page.evaluate(f"""(selector, val) => {{
+                                    const el = document.querySelector(selector);
+                                    if (el) {{
+                                        el.value = val;
+                                        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                    }}
+                                }}""", input_panel_sel, session.video_url)
                                 z_sleep(1)
                                 url_filled = True
-                                session.log(f"âœ… URL filled")
+                                session.log(f"✅ URL filled accurately")
 
                             submit_sel = submit_panel_sel
                             remove_overlays(page)
